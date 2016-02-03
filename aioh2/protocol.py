@@ -130,17 +130,19 @@ class H2Protocol(asyncio.Protocol):
                 else:
                     self._stream_windows[stream_id].clear()
 
-    async def start_request(self, headers, end_stream=False):
-        await self._resumed.wait()
+    @asyncio.coroutine
+    def start_request(self, headers, end_stream=False):
+        yield from self._resumed.wait()
         stream_id = self._conn.get_next_available_stream_id()
         self._conn.send_headers(stream_id, headers, end_stream=end_stream)
         self._flush()
         self._sync_window_open(stream_id)
         return stream_id
 
-    async def send_data(self, stream_id, data, end_stream=False):
+    @asyncio.coroutine
+    def send_data(self, stream_id, data, end_stream=False):
         while True:
-            await self._resumed.wait()
+            yield from self._resumed.wait()
             data_size = len(data)
             size = min(data_size,
                        self._conn.local_flow_control_window(stream_id),
@@ -155,16 +157,18 @@ class H2Protocol(asyncio.Protocol):
                 data = data[size:]
                 self._flush()
                 self._sync_window_open(stream_id)
-            await self._window_open.wait()
-            await self._stream_windows[stream_id].wait()
+            yield from self._window_open.wait()
+            yield from self._stream_windows[stream_id].wait()
 
-    async def send_headers(self, stream_id, headers, end_stream=False):
-        await self._resumed.wait()
+    @asyncio.coroutine
+    def send_headers(self, stream_id, headers, end_stream=False):
+        yield from self._resumed.wait()
         self._conn.send_headers(stream_id, headers, end_stream=end_stream)
         self._flush()
 
-    async def end_stream(self, stream_id):
-        await self._resumed.wait()
+    @asyncio.coroutine
+    def end_stream(self, stream_id):
+        yield from self._resumed.wait()
         self._conn.end_stream(stream_id)
         self._flush()
         self._sync_window_open(stream_id)

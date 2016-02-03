@@ -1,12 +1,11 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
+import sys
 
 try:
     from setuptools import setup
 except ImportError:
     from distutils.core import setup
-
 
 with open('README.rst') as readme_file:
     readme = readme_file.read()
@@ -17,6 +16,9 @@ with open('HISTORY.rst') as history_file:
 requirements = [
     'h2',
 ]
+
+if sys.version_info[:2] < (3, 4):
+    requirements.append('asyncio')
 
 test_requirements = [
 ]
