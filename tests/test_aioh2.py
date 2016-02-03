@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 test_aioh2
@@ -7,24 +6,55 @@ test_aioh2
 
 Tests for `aioh2` module.
 """
-
+import os
 import unittest
+import uuid
 
-from aioh2 import protocol
+import asyncio
+from h2.connection import H2Connection
+from h2.events import RemoteSettingsChanged, SettingsAcknowledged
+
+from aioh2 import H2Protocol
+from . import async_test
 
 
-class TestAioh2(unittest.TestCase):
+class Server(H2Protocol):
+    pass
 
+
+class TestServer(unittest.TestCase):
     def setUp(self):
-        pass
+        self.loop = asyncio.get_event_loop()
+        self.path = os.path.join('/tmp', uuid.uuid4().hex)
+        self.server = self.loop.run_until_complete(
+            self.loop.create_unix_server(
+                lambda: Server(False, loop=self.loop), self.path))
 
     def tearDown(self):
-        pass
+        self.server.close()
+        os.remove(self.path)
 
-    def test_000_something(self):
-        pass
+    @asyncio.coroutine
+    def _connect(self):
+        r, w = yield from asyncio.open_unix_connection(self.path)
+        conn = H2Connection()
+        conn.initiate_connection()
+        w.write(conn.data_to_send())
+
+        events = conn.receive_data((yield from r.read(1024)))
+        self.assertEqual(len(events), 1)
+        self.assertIsInstance(events[0], RemoteSettingsChanged)
+
+        events = conn.receive_data((yield from r.read(1024)))
+        self.assertEqual(len(events), 1)
+        self.assertIsInstance(events[0], SettingsAcknowledged)
+
+    @async_test()
+    def test_connect(self):
+        yield from self._connect()
 
 
 if __name__ == '__main__':
     import sys
+
     sys.exit(unittest.main())

@@ -111,6 +111,8 @@ class H2Protocol(asyncio.Protocol):
                        event.error_code)
         self._transport.close()
 
+    # Internals
+
     def _flush(self):
         self._transport.write(self._conn.data_to_send())
 
@@ -129,6 +131,8 @@ class H2Protocol(asyncio.Protocol):
                     self._stream_windows[stream_id].set()
                 else:
                     self._stream_windows[stream_id].clear()
+
+    # APIs
 
     @asyncio.coroutine
     def start_request(self, headers, end_stream=False):
@@ -172,6 +176,8 @@ class H2Protocol(asyncio.Protocol):
         self._conn.end_stream(stream_id)
         self._flush()
         self._sync_window_open(stream_id)
+
+    # Events
 
     def request_received(self, stream_id, headers):
         pass
