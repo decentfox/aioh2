@@ -60,13 +60,16 @@ class H2Protocol(asyncio.Protocol):
         events_ = self._conn.receive_data(data)
         self._flush()
         for event in events_:
-            self._event_handlers[type(event)](event)
+            self._event_received(event)
 
     def eof_received(self):
         self._conn.close_connection()
         self._flush()
 
     # hyper-h2 event handlers
+
+    def _event_received(self, event):
+        self._event_handlers[type(event)](event)
 
     def _request_received(self, event: events.RequestReceived):
         self._sync_window_open(event.stream_id)
