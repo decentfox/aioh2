@@ -147,8 +147,7 @@ class TestServer(BaseTestCase):
         yield from self._expect_events(0)
 
         yield from self._assert_received(
-            stream_id, self.server.read_stream(stream_id, 8), b'35555588',
-            [6, 2])
+            stream_id, self.server.read_stream(stream_id, 8), b'35555588')
         yield from self._assert_received(
             stream_id, self.server.read_stream(stream_id, 2), b'88')
         yield from self._assert_received(

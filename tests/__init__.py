@@ -120,18 +120,14 @@ class BaseTestCase(unittest.TestCase):
         self.assertGreater(events[0].delta, 1073741822)
 
     @asyncio.coroutine
-    def _assert_received(self, stream_id, coro, expected, deltas=None):
+    def _assert_received(self, stream_id, coro, expected):
         data = yield from coro
         self.assertEqual(data, expected)
 
-        if deltas:
-            for delta in deltas:
-                events = yield from self._expect_events()
-                self.assertIsInstance(events[0], WindowUpdated)
-                self.assertEqual(events[0].stream_id, stream_id)
-                self.assertEqual(events[0].delta, delta)
-        else:
+        ack = 0
+        while ack < len(data):
             events = yield from self._expect_events()
             self.assertIsInstance(events[0], WindowUpdated)
             self.assertEqual(events[0].stream_id, stream_id)
-            self.assertEqual(events[0].delta, len(data))
+            ack += events[0].delta
+        self.assertEqual(ack, len(data))
