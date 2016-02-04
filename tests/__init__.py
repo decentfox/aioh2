@@ -5,7 +5,7 @@ import uuid
 
 import asyncio
 from h2.connection import H2Connection
-from h2.events import RemoteSettingsChanged
+from h2.events import RemoteSettingsChanged, RequestReceived, WindowUpdated
 from h2.events import SettingsAcknowledged
 
 from aioh2 import H2Protocol
@@ -20,12 +20,17 @@ def async_test(timeout=1):
     def _decorator(f):
         @functools.wraps(f)
         def _wrapper(self, *args, **kwargs):
+            task = self.loop.create_task(
+                asyncio.coroutine(f)(self, *args, **kwargs))
+
+            def _cancel():
+                task.print_stack()
+                task.cancel()
+
+            time_handle = self.loop.call_later(timeout, _cancel)
             try:
-                return self.loop.run_until_complete(
-                    asyncio.wait_for(
-                        asyncio.coroutine(f)(self, *args, **kwargs), timeout,
-                        loop=self.loop))
-            except asyncio.TimeoutError:
+                return self.loop.run_until_complete(task)
+            except asyncio.CancelledError:
                 events = []
                 while True:
                     try:
@@ -33,6 +38,8 @@ def async_test(timeout=1):
                     except asyncio.QueueEmpty:
                         break
                 self.fail('server events: {}'.format(events))
+            finally:
+                time_handle.cancel()
 
         return _wrapper
 
@@ -92,3 +99,39 @@ class BaseTestCase(unittest.TestCase):
             self.w.write(self.conn.data_to_send())
         self.assertEqual(len(events), n)
         return events
+
+    @asyncio.coroutine
+    def _send_headers(self):
+        headers = [(':method', 'GET'), (':path', '/index.html')]
+        stream_id = self.conn.get_next_available_stream_id()
+        self.conn.send_headers(stream_id, headers)
+        yield from self._expect_events(0)
+        event = yield from self.server.events.get()
+        self.assertIsInstance(event, RequestReceived)
+        self.assertEqual(event.stream_id, stream_id)
+        self.assertEqual(event.headers, headers)
+        return stream_id
+
+    @asyncio.coroutine
+    def _expect_connection_flow_control_disabled(self):
+        events = yield from self._expect_events()
+        self.assertIsInstance(events[0], WindowUpdated)
+        self.assertEqual(events[0].stream_id, 0)
+        self.assertGreater(events[0].delta, 1073741822)
+
+    @asyncio.coroutine
+    def _assert_received(self, stream_id, coro, expected, deltas=None):
+        data = yield from coro
+        self.assertEqual(data, expected)
+
+        if deltas:
+            for delta in deltas:
+                events = yield from self._expect_events()
+                self.assertIsInstance(events[0], WindowUpdated)
+                self.assertEqual(events[0].stream_id, stream_id)
+                self.assertEqual(events[0].delta, delta)
+        else:
+            events = yield from self._expect_events()
+            self.assertIsInstance(events[0], WindowUpdated)
+            self.assertEqual(events[0].stream_id, stream_id)
+            self.assertEqual(events[0].delta, len(data))
