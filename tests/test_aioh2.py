@@ -41,13 +41,12 @@ class TestServer(unittest.TestCase):
         conn.initiate_connection()
         w.write(conn.data_to_send())
 
-        events = conn.receive_data((yield from r.read(1024)))
-        self.assertEqual(len(events), 1)
+        events = []
+        while len(events) < 2:
+            events += conn.receive_data((yield from r.read(1024)))
+        self.assertEqual(len(events), 2)
         self.assertIsInstance(events[0], RemoteSettingsChanged)
-
-        events = conn.receive_data((yield from r.read(1024)))
-        self.assertEqual(len(events), 1)
-        self.assertIsInstance(events[0], SettingsAcknowledged)
+        self.assertIsInstance(events[1], SettingsAcknowledged)
 
     @async_test()
     def test_connect(self):
