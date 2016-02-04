@@ -13,7 +13,7 @@ aioh2
         :alt: Documentation Status
 
 
-HTTP/2 implementation with hyper-h2 on Python 3 asyncio.
+HTTP/2 implementation with hyper-h2_ on Python 3 asyncio.
 
 * Free software: BSD license
 * Documentation: https://aioh2.readthedocs.org.
@@ -21,7 +21,9 @@ HTTP/2 implementation with hyper-h2 on Python 3 asyncio.
 Features
 --------
 
-* TODO
+* Asynchronous HTTP/2 client and server
+* Managed flow control
+* More to come
 
 Credits
 ---------
@@ -30,3 +32,4 @@ This package was created with Cookiecutter_ and the `audreyr/cookiecutter-pypack
 
 .. _Cookiecutter: https://github.com/audreyr/cookiecutter
 .. _`audreyr/cookiecutter-pypackage`: https://github.com/audreyr/cookiecutter-pypackage
+.. _hyper-h2: https://github.com/python-hyper/hyper-h2
