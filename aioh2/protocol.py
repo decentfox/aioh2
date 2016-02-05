@@ -5,9 +5,18 @@ import asyncio
 from h2 import events
 from h2 import settings
 from h2.connection import H2Connection
-from h2.exceptions import NoSuchStreamError
+from h2.exceptions import NoSuchStreamError, StreamClosedError
 
+__all__ = ['H2Protocol']
 logger = getLogger(__package__)
+
+
+@asyncio.coroutine
+def _wait_for_events(*events):
+    while True:
+        yield from asyncio.wait([event.wait() for event in events])
+        if all([event.is_set() for event in events]):
+            return
 
 
 class _StreamEndedException(Exception):
@@ -51,9 +60,6 @@ class H2Stream:
     @property
     def buffer_size(self):
         return self._buffer_size
-
-    def close(self):
-        pass
 
     def feed_data(self, data):
         if data:
@@ -116,14 +122,22 @@ class H2Stream:
 
 
 class H2Protocol(asyncio.Protocol):
-    def __init__(self, client_side, *, loop=None):
+    def __init__(self, client_side, *, loop=None, concurrency=1024):
         if loop is None:
             loop = asyncio.get_event_loop()
         self._loop = loop
         self._conn = H2Connection(client_side=client_side)
         self._transport = None
-        self._resumed = asyncio.Event(loop=loop)
         self._streams = {}
+        self._inbound_requests = asyncio.Queue(concurrency, loop=loop)
+
+        # Locks
+
+        self._resumed = asyncio.Event(loop=loop)
+        self._stream_creatable = asyncio.Event(loop=loop)
+
+        # Dispatch table
+
         self._event_handlers = {
             events.RequestReceived: self._request_received,
             events.ResponseReceived: self._response_received,
@@ -145,8 +159,11 @@ class H2Protocol(asyncio.Protocol):
     def connection_made(self, transport):
         self._transport = transport
         self._conn.initiate_connection()
+        self._conn.update_settings({
+            settings.MAX_CONCURRENT_STREAMS: self._inbound_requests.maxsize})
         self._flush()
         self._sync_window_open()
+        self._sync_stream_creatable()
         self.resume_writing()
 
     def connection_lost(self, exc):
@@ -177,7 +194,7 @@ class H2Protocol(asyncio.Protocol):
 
     def _request_received(self, event: events.RequestReceived):
         self._sync_window_open(event.stream_id)
-        self.request_received(event.stream_id, event.headers)
+        self._inbound_requests.put_nowait((0, event.stream_id, event.headers))
 
     def _response_received(self, event: events.ResponseReceived):
         self.response_received(event.stream_id, event.headers)
@@ -198,15 +215,19 @@ class H2Protocol(asyncio.Protocol):
     def _remote_settings_changed(self, event: events.RemoteSettingsChanged):
         if settings.INITIAL_WINDOW_SIZE in event.changed_settings:
             self._sync_window_open()
+        if settings.MAX_CONCURRENT_STREAMS in event.changed_settings:
+            self._sync_stream_creatable()
 
     def _ping_acknowledged(self, event: events.PingAcknowledged):
         pass
 
     def _stream_ended(self, event: events.StreamEnded):
         self._get_stream(event.stream_id).feed_eof()
+        self._sync_stream_creatable()
 
     def _stream_reset(self, event: events.StreamReset):
         self._sync_window_open(event.stream_id)
+        self._sync_stream_creatable()
 
     def _pushed_stream_received(self, event: events.PushedStreamReceived):
         pass
@@ -240,9 +261,8 @@ class H2Protocol(asyncio.Protocol):
             try:
                 window = self._conn.local_flow_control_window(stream_id)
             except NoSuchStreamError:
-                stream = self._streams.pop(stream_id)
-                if stream is not None:
-                    stream.close()
+                self._streams.pop(stream_id)
+                self._sync_stream_creatable()
                 raise
             else:
                 stream = self._get_stream(stream_id)
@@ -257,6 +277,13 @@ class H2Protocol(asyncio.Protocol):
                 except NoSuchStreamError:
                     pass
 
+    def _sync_stream_creatable(self):
+        if (self._conn.open_outbound_streams >=
+                self._conn.remote_settings.max_concurrent_streams):
+            self._stream_creatable.clear()
+        else:
+            self._stream_creatable.set()
+
     def _flow_control(self, stream_id):
         delta = (self._conn.local_settings.initial_window_size -
                  self._get_stream(stream_id).buffer_size -
@@ -269,7 +296,7 @@ class H2Protocol(asyncio.Protocol):
 
     @asyncio.coroutine
     def start_request(self, headers, end_stream=False):
-        yield from self._resumed.wait()
+        yield from _wait_for_events(self._resumed, self._stream_creatable)
         stream_id = self._conn.get_next_available_stream_id()
         self._conn.send_headers(stream_id, headers, end_stream=end_stream)
         self._flush()
@@ -312,6 +339,11 @@ class H2Protocol(asyncio.Protocol):
         self._sync_window_open(stream_id)
 
     @asyncio.coroutine
+    def recv_request(self):
+        rv = yield from self._inbound_requests.get()
+        return rv[1:]
+
+    @asyncio.coroutine
     def read_stream(self, stream_id, size=None):
         rv = []
         try:
@@ -332,7 +364,7 @@ class H2Protocol(asyncio.Protocol):
                         rv.extend(bufs)
                         size -= count
                         self._flow_control(stream_id)
-        except NoSuchStreamError:
+        except StreamClosedError:
             pass
         except _StreamEndedException as e:
             self._flow_control(stream_id)
@@ -340,9 +372,6 @@ class H2Protocol(asyncio.Protocol):
         return b''.join(rv)
 
     # Events
-
-    def request_received(self, stream_id, headers):
-        pass
 
     def response_received(self, stream_id, headers):
         pass

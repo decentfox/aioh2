@@ -81,12 +81,15 @@ class BaseTestCase(unittest.TestCase):
         self.conn = H2Connection()
         self.conn.initiate_connection()
         self.w.write(self.conn.data_to_send())
-        events = yield from self._expect_events(2)
+        events = yield from self._expect_events(3)
         self.assertIsInstance(events[0], RemoteSettingsChanged)
-        self.assertIsInstance(events[1], SettingsAcknowledged)
+        self.assertIsInstance(events[1], RemoteSettingsChanged)
+        self.assertIsInstance(events[2], SettingsAcknowledged)
 
         self.assertIsInstance((yield from self.server.events.get()),
                               RemoteSettingsChanged)
+        self.assertIsInstance((yield from self.server.events.get()),
+                              SettingsAcknowledged)
         self.assertIsInstance((yield from self.server.events.get()),
                               SettingsAcknowledged)
 
