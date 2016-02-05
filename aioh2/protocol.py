@@ -39,6 +39,7 @@ class H2Stream:
         self._buffers = deque()
         self._buffer_size = 0
         self._buffer_ready = asyncio.Event(loop=loop)
+        self._response = asyncio.Future(loop=loop)
         self._eof_received = False
 
     @property
@@ -61,6 +62,10 @@ class H2Stream:
     def buffer_size(self):
         return self._buffer_size
 
+    @property
+    def response(self):
+        return self._response
+
     def feed_data(self, data):
         if data:
             self._buffers.append(data)
@@ -70,6 +75,9 @@ class H2Stream:
     def feed_eof(self):
         self._eof_received = True
         self._buffer_ready.set()
+
+    def feed_response(self, headers):
+        self._response.set_result(headers)
 
     @asyncio.coroutine
     def read_frame(self):
@@ -197,7 +205,7 @@ class H2Protocol(asyncio.Protocol):
         self._inbound_requests.put_nowait((0, event.stream_id, event.headers))
 
     def _response_received(self, event: events.ResponseReceived):
-        self.response_received(event.stream_id, event.headers)
+        self._get_stream(event.stream_id).feed_response(event.headers)
 
     def _trailers_received(self, event: events.TrailersReceived):
         self.trailers_received(event.stream_id, event.headers)
@@ -344,6 +352,10 @@ class H2Protocol(asyncio.Protocol):
         return rv[1:]
 
     @asyncio.coroutine
+    def recv_response(self, stream_id):
+        return (yield from self._get_stream(stream_id).response)
+
+    @asyncio.coroutine
     def read_stream(self, stream_id, size=None):
         rv = []
         try:
@@ -367,14 +379,14 @@ class H2Protocol(asyncio.Protocol):
         except StreamClosedError:
             pass
         except _StreamEndedException as e:
-            self._flow_control(stream_id)
+            try:
+                self._flow_control(stream_id)
+            except StreamClosedError:
+                pass
             rv.extend(e.bufs)
         return b''.join(rv)
 
     # Events
-
-    def response_received(self, stream_id, headers):
-        pass
 
     def trailers_received(self, stream_id, headers):
         pass
