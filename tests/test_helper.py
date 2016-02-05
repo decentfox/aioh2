@@ -10,10 +10,12 @@ class TestHelper(BaseTestCase):
     @asyncio.coroutine
     def _cb(self, proto):
         stream_id, headers = yield from proto.recv_request()
-        resp = yield from proto.read_stream(stream_id, -1)
         yield from proto.send_headers(stream_id, {':status': '200'})
         yield from proto.send_data(stream_id, b'hello, ')
-        yield from proto.send_data(stream_id, resp, end_stream=True)
+        resp = yield from proto.read_stream(stream_id, -1)
+        yield from proto.send_data(stream_id, resp)
+        yield from proto.send_headers(stream_id, {'len': str(len(resp))},
+                                      end_stream=True)
 
     @async_test
     def test_tcp(self):
@@ -34,3 +36,5 @@ class TestHelper(BaseTestCase):
         self.assertEqual(dict(headers)[':status'], '200')
         resp = yield from client.read_stream(stream_id, -1)
         self.assertEqual(resp, b'hello, ' + name)
+        trailers = yield from client.recv_trailers(stream_id)
+        self.assertEqual(dict(trailers)['len'], str(len(name)))

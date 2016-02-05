@@ -12,10 +12,10 @@ logger = getLogger(__package__)
 
 
 @asyncio.coroutine
-def _wait_for_events(*events):
+def _wait_for_events(*events_):
     while True:
-        yield from asyncio.wait([event.wait() for event in events])
-        if all([event.is_set() for event in events]):
+        yield from asyncio.wait([event.wait() for event in events_])
+        if all([event.is_set() for event in events_]):
             return
 
 
@@ -40,6 +40,7 @@ class H2Stream:
         self._buffer_size = 0
         self._buffer_ready = asyncio.Event(loop=loop)
         self._response = asyncio.Future(loop=loop)
+        self._trailers = asyncio.Future(loop=loop)
         self._eof_received = False
 
     @property
@@ -66,6 +67,10 @@ class H2Stream:
     def response(self):
         return self._response
 
+    @property
+    def trailers(self):
+        return self._trailers
+
     def feed_data(self, data):
         if data:
             self._buffers.append(data)
@@ -75,9 +80,14 @@ class H2Stream:
     def feed_eof(self):
         self._eof_received = True
         self._buffer_ready.set()
+        self.feed_trailers({})
 
     def feed_response(self, headers):
         self._response.set_result(headers)
+
+    def feed_trailers(self, headers):
+        if not self._trailers.done():
+            self._trailers.set_result(headers)
 
     @asyncio.coroutine
     def read_frame(self):
@@ -130,7 +140,7 @@ class H2Stream:
 
 
 class H2Protocol(asyncio.Protocol):
-    def __init__(self, client_side, *, loop=None, concurrency=1024):
+    def __init__(self, client_side: bool, *, loop=None, concurrency=1024):
         if loop is None:
             loop = asyncio.get_event_loop()
         self._loop = loop
@@ -208,7 +218,7 @@ class H2Protocol(asyncio.Protocol):
         self._get_stream(event.stream_id).feed_response(event.headers)
 
     def _trailers_received(self, event: events.TrailersReceived):
-        self.trailers_received(event.stream_id, event.headers)
+        self._get_stream(event.stream_id).feed_trailers(event.headers)
 
     def _data_received(self, event: events.DataReceived):
         self._get_stream(event.stream_id).feed_data(event.data)
@@ -356,6 +366,10 @@ class H2Protocol(asyncio.Protocol):
         return (yield from self._get_stream(stream_id).response)
 
     @asyncio.coroutine
+    def recv_trailers(self, stream_id):
+        return (yield from self._get_stream(stream_id).trailers)
+
+    @asyncio.coroutine
     def read_stream(self, stream_id, size=None):
         rv = []
         try:
@@ -385,8 +399,3 @@ class H2Protocol(asyncio.Protocol):
                 pass
             rv.extend(e.bufs)
         return b''.join(rv)
-
-    # Events
-
-    def trailers_received(self, stream_id, headers):
-        pass
