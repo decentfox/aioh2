@@ -22,8 +22,20 @@ deploy:
   distributions: sdist bdist_wheel
   user: fantix
   password:
-    secure: PLEASE_REPLACE_ME
+    secure: !!binary |
+      TVdSanJlb2dFa1BEcGVHVFVtYWF0VGhuWnlxQnVjV3kvUGJhMlh3cTZqbStWUmhTb3RzQ3ArR1dI
+      NW5FRzdVcW0xM2tEeGRwMDdCd3JHd1RKZ3BCNis4Nm9TelZ2N0FnVVJ6SzFkZEwyb0JUajN0T1lP
+      bEhPSmIzVEhkdHRJMnFRWWVUOUwxd3BleWhOczlZS0ZhOWJRWHJpZ1dQNnMxeFl4cWpuRGdGZWI1
+      b3FhM094WUJvM1FSQkZYNnBpb1JvQWFzUFV2bXZpa2Y0d1BBV0FXN3dSWFo1TDArRUxCME45NFNy
+      Sm8wTEg5L3BoMzJ5UExUOUUrWmpCblJlVlhPNU1RZjBWTEFIQnZ5V3AvWXhrRmZxblBkV1g5eDZS
+      S0c5d3drRmFvUGVtSng0bjFQS1ZyNVppcUdYMWRJZEN5OG5oZkJCU0NQSWlvNXR2WC8vdHBVbEoz
+      QmkyYVpZWEpXRDd1aWd5L3NvM2hFdk92WDIwdFo2Y3h3NEJXb2h1S3ZaMWFVK3ZyUzhPN2pCbGpM
+      aURrdW16RzRSLy9GRjJmdXBMdS9wU1RnS1h0TWsrM0U4a2Y5UDhZS1RFbytuZWxJQ0VSQ05xTnlC
+      Y0x0Skg4TjlTLzllTVZYUVh6andKcFZ0RWUrRkdPZ09rblVvYWdhc0VMNEt4cjVHbnpUaG9iNDE1
+      b2I2azZKYWhySDg4eHJJakhpKzJqR09sc0NDR215VGVFLzVhTkxQZzZRSTZjS09lWXAxQktvV3Yx
+      aDhxSEEvbnhZR1NVeTgxYi96ZVBDRGhnWUhWeHl0UzZmeUZuTmgzYWVOWlZIR3cycFF2WXM5NFFx
+      Tm9uNC9qMU9ISXRkSk1LRzAvcy9XVjR2bllPVEl6MHE2U1gyd3hVTTgxcHpkUmcrMkdmNHg2K0U9
   on:
     tags: true
     repo: decentfox/aioh2
-    condition: $TOXENV == py27
+    condition: $TOXENV == py33
