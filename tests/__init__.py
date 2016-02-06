@@ -104,10 +104,10 @@ class BaseTestCase(unittest.TestCase):
         return events
 
     @asyncio.coroutine
-    def _send_headers(self):
+    def _send_headers(self, end_stream=False):
         headers = [(':method', 'GET'), (':path', '/index.html')]
         stream_id = self.conn.get_next_available_stream_id()
-        self.conn.send_headers(stream_id, headers)
+        self.conn.send_headers(stream_id, headers, end_stream=end_stream)
         yield from self._expect_events(0)
         event = yield from self.server.events.get()
         self.assertIsInstance(event, RequestReceived)
