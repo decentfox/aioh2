@@ -22,8 +22,14 @@ Features
 --------
 
 * Asynchronous HTTP/2 client and server
-* Managed flow control
+* Managed flow control and streaming data
 * More to come
+
+Non-features:
+
+* Request/Response wrappers
+* Web server, dispatcher, cookie, etc
+* HTTP/2 upgrade
 
 Example
 -------
