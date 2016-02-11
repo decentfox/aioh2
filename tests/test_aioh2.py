@@ -19,6 +19,7 @@ from h2.events import SettingsAcknowledged
 from h2.exceptions import FlowControlError
 from h2.settings import INITIAL_WINDOW_SIZE
 
+from aioh2 import SendException
 from . import async_test, BaseTestCase
 
 
@@ -208,7 +209,7 @@ class TestServer(BaseTestCase):
         self.assertIsInstance(event, RemoteSettingsChanged)
 
         stream_id = yield from self._send_headers(end_stream=True)
-        yield from self.server.send_headers(stream_id, {'a': '1'})
+        yield from self.server.start_response(stream_id, {'a': '1'})
         events = yield from self._expect_events()
         self.assertIsInstance(events[0], ResponseReceived)
 
@@ -249,7 +250,7 @@ class TestServer(BaseTestCase):
         self.assertIsInstance(event, RemoteSettingsChanged)
 
         stream_id = yield from self._send_headers(end_stream=True)
-        yield from self.server.send_headers(stream_id, {'a': '1'})
+        yield from self.server.start_response(stream_id, {'a': '1'})
         events = yield from self._expect_events()
         self.assertIsInstance(events[0], ResponseReceived)
 
@@ -266,8 +267,12 @@ class TestServer(BaseTestCase):
         self.conn.reset_stream(stream_id)
         yield from self._expect_events(0)
 
-        rest = yield from f
-        self.assertEqual(rest, b'45678')
+        try:
+            yield from f
+        except SendException as e:
+            self.assertEqual(e.data, b'45678')
+        else:
+            self.assertRaises(SendException, lambda: None)
 
 
 if __name__ == '__main__':

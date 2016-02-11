@@ -44,7 +44,7 @@ Example
             stream_id, headers = await proto.recv_request()
 
             # Send response headers
-            await proto.send_headers(stream_id, {':status': '200'})
+            await proto.start_response(stream_id, {':status': '200'})
 
             # Send some response
             await proto.send_data(stream_id, b'hello, ')
@@ -56,8 +56,7 @@ Example
             await proto.send_data(stream_id, resp)
 
             # Send trailers
-            await proto.send_headers(stream_id, {'len': str(len(resp))},
-                                     end_stream=True)
+            await proto.send_trailers(stream_id, {'len': str(len(resp))})
 
     # Start server on random port, with maximum concurrent requests of 3
     server = await aioh2.start_server(

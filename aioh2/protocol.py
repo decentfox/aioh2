@@ -5,7 +5,9 @@ import asyncio
 from h2 import events
 from h2 import settings
 from h2.connection import H2Connection
-from h2.exceptions import NoSuchStreamError, StreamClosedError
+from h2.exceptions import NoSuchStreamError, StreamClosedError, ProtocolError
+
+from . import exceptions
 
 __all__ = ['H2Protocol']
 logger = getLogger(__package__)
@@ -13,10 +15,8 @@ logger = getLogger(__package__)
 
 @asyncio.coroutine
 def _wait_for_events(*events_):
-    while True:
+    while not all([event.is_set() for event in events_]):
         yield from asyncio.wait([event.wait() for event in events_])
-        if all([event.is_set() for event in events_]):
-            return
 
 
 class _StreamEndedException(Exception):
@@ -34,7 +34,7 @@ class CallableEvent(asyncio.Event):
     @asyncio.coroutine
     def wait(self):
         while not self._func():
-            self.sync()
+            self.clear()
             yield from super().wait()
 
     def sync(self):
@@ -184,7 +184,8 @@ class H2Protocol(asyncio.Protocol):
 
         # Locks
 
-        self._resumed = asyncio.Event(loop=loop)
+        self._is_resumed = False
+        self._resumed = CallableEvent(lambda: self._is_resumed, loop=loop)
         self._stream_creatable = CallableEvent(self._is_stream_creatable,
                                                loop=loop)
 
@@ -223,10 +224,12 @@ class H2Protocol(asyncio.Protocol):
         self.pause_writing()
 
     def pause_writing(self):
-        self._resumed.clear()
+        self._is_resumed = False
+        self._resumed.sync()
 
     def resume_writing(self):
-        self._resumed.set()
+        self._is_resumed = True
+        self._resumed.sync()
 
     def data_received(self, data):
         events_ = self._conn.receive_data(data)
@@ -326,7 +329,24 @@ class H2Protocol(asyncio.Protocol):
     # APIs
 
     @asyncio.coroutine
-    def start_request(self, headers, end_stream=False):
+    def start_request(self, headers, *, end_stream=False):
+        """
+        Start a request by sending given headers on a new stream, and return
+        the ID of the new stream.
+
+        This may block until the underlying transport becomes writable, and
+        the number of concurrent outbound requests (open outbound streams) is
+        less than the value of peer config MAX_CONCURRENT_STREAMS.
+
+        The completion of the call to this method does not mean the request is
+        successfully delivered - data is only correctly stored in a buffer to
+        be sent. There's no guarantee it is truly delivered.
+
+        :param headers: A list of key-value tuples as headers.
+        :param end_stream: To send a request without body, set `end_stream` to
+                           `True` (default `False`).
+        :return: Stream ID as a integer, used for further communication.
+        """
         yield from _wait_for_events(self._resumed, self._stream_creatable)
         stream_id = self._conn.get_next_available_stream_id()
         self._conn.send_headers(stream_id, headers, end_stream=end_stream)
@@ -334,7 +354,53 @@ class H2Protocol(asyncio.Protocol):
         return stream_id
 
     @asyncio.coroutine
-    def send_data(self, stream_id, data, end_stream=False):
+    def start_response(self, stream_id, headers, *, end_stream=False):
+        """
+        Start a response by sending given headers on the given stream.
+
+        This may block until the underlying transport becomes writable.
+
+        :param stream_id: Which stream to send response on.
+        :param headers: A list of key-value tuples as headers.
+        :param end_stream: To send a response without body, set `end_stream` to
+                           `True` (default `False`).
+        """
+        yield from self._resumed.wait()
+        self._conn.send_headers(stream_id, headers, end_stream=end_stream)
+        self._flush()
+
+    @asyncio.coroutine
+    def send_data(self, stream_id, data, *, end_stream=False):
+        """
+        Send request or response body on the given stream.
+
+        This will block until either whole data is sent, or the stream gets
+        closed. Meanwhile, a paused underlying transport or a closed flow
+        control window will also help waiting. If the peer increase the flow
+        control window, this method will start sending automatically.
+
+        This can be called multiple times, but it must be called after a
+        `start_request` or `start_response` with the returning stream ID, and
+        before any `end_stream` instructions; Otherwise it will fail.
+
+        The given data may be automatically split into smaller frames in order
+        to fit in the configured frame size or flow control window.
+
+        Each stream can only have one `send_data` running, others calling this
+        will be blocked on a per-stream lock (wlock), so that coroutines
+        sending data concurrently won't mess up with each other.
+
+        Similarly, the completion of the call to this method does not mean the
+        data is delivered.
+
+        :param stream_id: Which stream to send data on
+        :param data: Bytes to send
+        :param end_stream: To finish sending a request or response, set this to
+                           `True` to close the given stream locally after data
+                           is sent (default `False`).
+        :raise: `SendException` if there is an error sending data. Data left
+                unsent can be found in `data` of the exception.
+        """
         try:
             with (yield from self._get_stream(stream_id).wlock):
                 while True:
@@ -348,24 +414,40 @@ class H2Protocol(asyncio.Protocol):
                         self._conn.send_data(stream_id, data,
                                              end_stream=end_stream)
                         self._flush()
-                        data = b''
                         break
                     elif size > 0:
                         self._conn.send_data(stream_id, data[:size])
                         data = data[size:]
                         self._flush()
-        except NoSuchStreamError:
-            pass
-        return data
+        except ProtocolError:
+            raise exceptions.SendException(data)
 
     @asyncio.coroutine
-    def send_headers(self, stream_id, headers, end_stream=False):
-        yield from self._resumed.wait()
-        self._conn.send_headers(stream_id, headers, end_stream=end_stream)
-        self._flush()
+    def send_trailers(self, stream_id, headers):
+        """
+        Send trailers on the given stream, closing the stream locally.
+
+        This may block until the underlying transport becomes writable, or
+        other coroutines release the wlock on this stream.
+
+        :param stream_id: Which stream to send trailers on.
+        :param headers: A list of key-value tuples as trailers.
+        """
+        with (yield from self._get_stream(stream_id).wlock):
+            yield from self._resumed.wait()
+            self._conn.send_headers(stream_id, headers, end_stream=True)
+            self._flush()
 
     @asyncio.coroutine
     def end_stream(self, stream_id):
+        """
+        Close the given stream locally.
+
+        This may block until the underlying transport becomes writable, or
+        other coroutines release the wlock on this stream.
+
+        :param stream_id: Which stream to close.
+        """
         with (yield from self._get_stream(stream_id).wlock):
             yield from self._resumed.wait()
             self._conn.end_stream(stream_id)
@@ -373,19 +455,61 @@ class H2Protocol(asyncio.Protocol):
 
     @asyncio.coroutine
     def recv_request(self):
+        """
+        Retrieve next inbound request in queue.
+
+        This will block until a request is available.
+
+        :return: A tuple `(stream_id, headers)`.
+        """
         rv = yield from self._inbound_requests.get()
         return rv[1:]
 
     @asyncio.coroutine
     def recv_response(self, stream_id):
+        """
+        Wait until a response is ready on the given stream.
+
+        :param stream_id: Stream to wait on.
+        :return: A list of key-value tuples as response headers.
+        """
         return (yield from self._get_stream(stream_id).response)
 
     @asyncio.coroutine
     def recv_trailers(self, stream_id):
+        """
+        Wait until trailers are ready on the given stream.
+
+        :param stream_id: Stream to wait on.
+        :return: A list of key-value tuples as trailers.
+        """
         return (yield from self._get_stream(stream_id).trailers)
 
     @asyncio.coroutine
     def read_stream(self, stream_id, size=None):
+        """
+        Read data from the given stream.
+
+        By default (`size=None`), this returns all data left in current HTTP/2
+        frame. In other words, default behavior is to receive frame by frame.
+
+        If size is given a number above zero, method will try to return as much
+        bytes as possible up to the given size, block until enough bytes are
+        ready or stream is remotely closed.
+
+        If below zero, it will read until the stream is remotely closed and
+        return everything at hand.
+
+        `size=0` is a special case that does nothing but returns `b''`. The
+        same result `b''` is also returned under other conditions if there is
+        no more data on the stream to receive, even under `size=None` and peer
+        sends an empty frame - you can use `b''` to safely identify the end of
+        the given stream.
+
+        :param stream_id: Stream to read
+        :param size: Expected size to read, `-1` for all, default frame.
+        :return: Bytes read or empty if there is no more to expect.
+        """
         rv = []
         try:
             with (yield from self._get_stream(stream_id).rlock):
