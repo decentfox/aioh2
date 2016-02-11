@@ -506,6 +506,9 @@ class H2Protocol(asyncio.Protocol):
         sends an empty frame - you can use `b''` to safely identify the end of
         the given stream.
 
+        Flow control frames will be automatically sent while reading clears the
+        buffer, allowing more data to come in.
+
         :param stream_id: Stream to read
         :param size: Expected size to read, `-1` for all, default frame.
         :return: Bytes read or empty if there is no more to expect.
