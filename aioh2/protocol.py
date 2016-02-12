@@ -1,3 +1,4 @@
+import struct
 from collections import deque
 from logging import getLogger
 
@@ -173,7 +174,8 @@ class H2Stream:
 
 
 class H2Protocol(asyncio.Protocol):
-    def __init__(self, client_side: bool, *, loop=None, concurrency=1024):
+    def __init__(self, client_side: bool, *, loop=None,
+                 concurrency=8, functional_timeout=2):
         if loop is None:
             loop = asyncio.get_event_loop()
         self._loop = loop
@@ -188,6 +190,12 @@ class H2Protocol(asyncio.Protocol):
         self._resumed = CallableEvent(lambda: self._is_resumed, loop=loop)
         self._stream_creatable = CallableEvent(self._is_stream_creatable,
                                                loop=loop)
+        self._last_active = 0
+        self._ping_index = -1
+        self._ping_time = 0
+        self._rtt = None
+        self._functional_timeout = functional_timeout
+        self._functional = CallableEvent(self._is_functional, loop=loop)
 
         # Dispatch table
 
@@ -217,6 +225,8 @@ class H2Protocol(asyncio.Protocol):
         self._flush()
         self._stream_creatable.sync()
         self.resume_writing()
+        self._last_active = self._loop.time()
+        self._functional.sync()
 
     def connection_lost(self, exc):
         self._conn = None
@@ -232,6 +242,8 @@ class H2Protocol(asyncio.Protocol):
         self._resumed.sync()
 
     def data_received(self, data):
+        self._last_active = self._loop.time()
+        self._functional.sync()
         events_ = self._conn.receive_data(data)
         self._flush()
         for event in events_:
@@ -277,7 +289,8 @@ class H2Protocol(asyncio.Protocol):
             self._stream_creatable.sync()
 
     def _ping_acknowledged(self, event: events.PingAcknowledged):
-        pass
+        if struct.unpack('Q', event.ping_data) == self._ping_index:
+            self._rtt = self._loop.time() - self._ping_time
 
     def _stream_ended(self, event: events.StreamEnded):
         self._get_stream(event.stream_id).feed_eof()
@@ -325,6 +338,9 @@ class H2Protocol(asyncio.Protocol):
         if delta > 0:
             self._conn.increment_flow_control_window(delta, stream_id)
             self._flush()
+
+    def _is_functional(self):
+        return self._last_active + self._functional_timeout > self._loop.time()
 
     # APIs
 
@@ -544,4 +560,73 @@ class H2Protocol(asyncio.Protocol):
 
     def update_settings(self, new_settings):
         self._conn.update_settings(new_settings)
+        self._flush()
+
+    @asyncio.coroutine
+    def wait_functional(self):
+        """
+        Wait until the connection becomes functional.
+
+        The connection is count functional if it was active within last few
+        seconds (defined by `functional_timeout`), where a newly-made
+        connection and received data indicate activeness.
+
+        :return: Most recently calculated round-trip time if any.
+        """
+        while not self._is_functional():
+            self._rtt = None
+            self._ping_index += 1
+            self._conn.ping(struct.pack('Q', self._ping_index))
+            self._flush()
+            try:
+                yield from asyncio.wait_for(self._functional.wait(),
+                                            self._functional_timeout)
+            except asyncio.TimeoutError:
+                pass
+        return self._rtt
+
+    @property
+    def initial_window_size(self):
+        """
+        Self initial window size (in octets) for stream-level flow control.
+
+        Setting a larger value may cause the inbound buffer increase, and allow
+        more data to be received. Setting with a smaller value does not
+        decrease the buffer immediately, but may prevent the peer from sending
+        more data to overflow the buffer for a while. However, it is still up
+        to the peer whether to respect this setting or not.
+        """
+        return self._conn.local_settings.initial_window_size
+
+    @initial_window_size.setter
+    def initial_window_size(self, val):
+        self._conn.update_settings({settings.INITIAL_WINDOW_SIZE: val})
+        self._flush()
+
+    @property
+    def max_frame_size(self):
+        """
+        The size of the largest frame payload that self is willing to receive,
+        in octets.
+
+        Smaller value indicates finer data slices the peer should send, vice
+        versa; the peer however may not agree.
+        """
+        return self._conn.local_settings.max_frame_size
+
+    @max_frame_size.setter
+    def max_frame_size(self, val):
+        self._conn.update_settings({settings.MAX_FRAME_SIZE: val})
+        self._flush()
+
+    @property
+    def max_concurrent_streams(self):
+        """
+        The maximum number of concurrent streams that self is willing to allow.
+        """
+        return self._conn.local_settings.max_concurrent_streams
+
+    @max_concurrent_streams.setter
+    def max_concurrent_streams(self, val):
+        self._conn.update_settings({settings.MAX_CONCURRENT_STREAMS: val})
         self._flush()

@@ -31,6 +31,7 @@ class TestHelper(BaseTestCase):
 
         @asyncio.coroutine
         def _test():
+            yield from client.wait_functional()
             # Send request
             stream_id = yield from client.start_request(
                 {':method': 'GET', ':path': '/index.html'})
