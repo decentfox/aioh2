@@ -30,7 +30,14 @@ async def example():
     port = server.sockets[0].getsockname()[1]
 
     # Open client connection
-    client = await aioh2.open_connection('0.0.0.0', port)
+    client = await aioh2.open_connection('0.0.0.0', port,
+                                         functional_timeout=0.1)
+
+    # Optionally wait for an ack of tickless ping
+    await asyncio.sleep(0.1)
+    rtt = await client.wait_functional()
+    if rtt:
+        print('Round-trip time: %.1fms' % (rtt * 1000))
 
     # Start request with headers
     stream_id = await client.start_request(
@@ -41,15 +48,15 @@ async def example():
 
     # Receive response
     headers = await client.recv_response(stream_id)
-    print(headers)
+    print('Response headers:', headers)
 
     # Read all response body
     resp = await client.read_stream(stream_id, -1)
-    print(resp)
+    print('Response body:', resp)
 
     # Read response trailers
     trailers = await client.recv_trailers(stream_id)
-    print(trailers)
+    print('Response trailers:', trailers)
 
 asyncio.get_event_loop().run_until_complete(example())
 

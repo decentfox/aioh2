@@ -289,7 +289,7 @@ class H2Protocol(asyncio.Protocol):
             self._stream_creatable.sync()
 
     def _ping_acknowledged(self, event: events.PingAcknowledged):
-        if struct.unpack('Q', event.ping_data) == self._ping_index:
+        if struct.unpack('Q', event.ping_data) == (self._ping_index,):
             self._rtt = self._loop.time() - self._ping_time
 
     def _stream_ended(self, event: events.StreamEnded):
@@ -576,6 +576,7 @@ class H2Protocol(asyncio.Protocol):
         while not self._is_functional():
             self._rtt = None
             self._ping_index += 1
+            self._ping_time = self._loop.time()
             self._conn.ping(struct.pack('Q', self._ping_index))
             self._flush()
             try:
@@ -584,6 +585,23 @@ class H2Protocol(asyncio.Protocol):
             except asyncio.TimeoutError:
                 pass
         return self._rtt
+
+    @property
+    def functional_timeout(self):
+        """
+        A timeout value in seconds used by `wait_functional`, beyond which will
+        self send a PING frame since last activeness and block the call to
+        `wait_functional` until acknowledgement is received.
+
+        Setting this to a larger value may cause pending `wait_functional`
+        calls to unblock immediately.
+        """
+        return self._functional_timeout
+
+    @functional_timeout.setter
+    def functional_timeout(self, val):
+        self._functional_timeout = val
+        self._functional.sync()
 
     @property
     def initial_window_size(self):

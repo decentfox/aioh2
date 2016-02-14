@@ -28,10 +28,14 @@ class TestHelper(BaseTestCase):
         port = server.sockets[0].getsockname()[1]
 
         client = yield from aioh2.open_connection('0.0.0.0', port)
+        client.functional_timeout = 0.1
+        yield from asyncio.sleep(0.2)
 
         @asyncio.coroutine
         def _test():
-            yield from client.wait_functional()
+            rtt = yield from client.wait_functional()
+            self.assertIsNotNone(rtt)
+            self.assertNotAlmostEqual(rtt, self.loop.time(), places=1)
             # Send request
             stream_id = yield from client.start_request(
                 {':method': 'GET', ':path': '/index.html'})

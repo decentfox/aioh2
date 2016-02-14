@@ -8,7 +8,7 @@ __all__ = ['open_connection', 'start_server']
 if hasattr(socket, 'AF_UNIX'):
     __all__.extend(['open_unix_connection', 'start_unix_server'])
 
-PROTOCOL_KWARGS = ('concurrency',)
+PROTOCOL_KWARGS = ('concurrency', 'functional_timeout')
 
 
 class _None:
