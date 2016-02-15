@@ -5,23 +5,23 @@ async def example():
     # Server request handler
     async def on_connected(proto):
         while True:
-            # Receive request
+            # Receive a request from queue
             stream_id, headers = await proto.recv_request()
 
             # Send response headers
             await proto.start_response(stream_id, {':status': '200'})
 
-            # Send some response
+            # Response body starts with "hello"
             await proto.send_data(stream_id, b'hello, ')
 
-            # Read all request body
-            resp = await proto.read_stream(stream_id, -1)
+            # Read all request body as a name from client side
+            name = await proto.read_stream(stream_id, -1)
 
-            # Send more response
-            await proto.send_data(stream_id, resp)
+            # Amend response body with the name
+            await proto.send_data(stream_id, name)
 
-            # Send trailers
-            await proto.send_trailers(stream_id, {'len': str(len(resp))})
+            # Send trailers with the length of the name
+            await proto.send_trailers(stream_id, {'len': str(len(name))})
 
     # Start server on random port, with maximum concurrent requests of 3
     server = await aioh2.start_server(
@@ -33,8 +33,8 @@ async def example():
     client = await aioh2.open_connection('0.0.0.0', port,
                                          functional_timeout=0.1)
 
-    # Optionally wait for an ack of tickless ping
-    await asyncio.sleep(0.1)
+    # Optionally wait for an ack of tickless ping - a.k.a. until functional
+    await asyncio.sleep(0.1)  # simulate a busy client with something else
     rtt = await client.wait_functional()
     if rtt:
         print('Round-trip time: %.1fms' % (rtt * 1000))
@@ -43,10 +43,10 @@ async def example():
     stream_id = await client.start_request(
         {':method': 'GET', ':path': '/index.html'})
 
-    # Send request body
+    # Send my name "world" as whole request body
     await client.send_data(stream_id, b'world', end_stream=True)
 
-    # Receive response
+    # Receive response headers
     headers = await client.recv_response(stream_id)
     print('Response headers:', headers)
 
@@ -58,5 +58,5 @@ async def example():
     trailers = await client.recv_trailers(stream_id)
     print('Response trailers:', trailers)
 
-asyncio.get_event_loop().run_until_complete(example())
 
+asyncio.get_event_loop().run_until_complete(example())
