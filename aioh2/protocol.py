@@ -3,6 +3,7 @@ from collections import deque
 from logging import getLogger
 
 import asyncio
+import priority
 from h2 import events
 from h2 import settings
 from h2.connection import H2Connection
@@ -183,6 +184,8 @@ class H2Protocol(asyncio.Protocol):
         self._transport = None
         self._streams = {}
         self._inbound_requests = asyncio.Queue(concurrency, loop=loop)
+        self._priority = priority.PriorityTree()
+        self._priority_events = {}
 
         # Locks
 
@@ -260,6 +263,8 @@ class H2Protocol(asyncio.Protocol):
 
     def _request_received(self, event: events.RequestReceived):
         self._inbound_requests.put_nowait((0, event.stream_id, event.headers))
+        self._priority.insert_stream(event.stream_id)
+        self._priority.block(event.stream_id)
 
     def _response_received(self, event: events.ResponseReceived):
         self._get_stream(event.stream_id).feed_response(event.headers)
@@ -307,7 +312,8 @@ class H2Protocol(asyncio.Protocol):
         pass
 
     def _priority_updated(self, event: events.PriorityUpdated):
-        pass
+        self._priority.reprioritize(
+            event.stream_id, event.depends_on, event.weight, event.exclusive)
 
     def _connection_terminated(self, event: events.ConnectionTerminated):
         logger.warning('Remote peer sent GOAWAY [ERR: %s], disconnect now.',
@@ -342,6 +348,18 @@ class H2Protocol(asyncio.Protocol):
     def _is_functional(self):
         return self._last_active + self._functional_timeout > self._loop.time()
 
+    def _priority_step(self):
+        # noinspection PyBroadException
+        try:
+            for stream_id in self._priority:
+                fut = self._priority_events.pop(stream_id, None)
+                if fut is not None:
+                    fut.set_result(None)
+                    break
+        except Exception:
+            if self._priority_events:
+                self._priority_events.popitem()[1].set_result(None)
+
     # APIs
 
     @asyncio.coroutine
@@ -365,6 +383,8 @@ class H2Protocol(asyncio.Protocol):
         """
         yield from _wait_for_events(self._resumed, self._stream_creatable)
         stream_id = self._conn.get_next_available_stream_id()
+        self._priority.insert_stream(stream_id)
+        self._priority.block(stream_id)
         self._conn.send_headers(stream_id, headers, end_stream=end_stream)
         self._flush()
         return stream_id
@@ -422,19 +442,32 @@ class H2Protocol(asyncio.Protocol):
                 while True:
                     yield from _wait_for_events(
                         self._resumed, self._get_stream(stream_id).window_open)
-                    data_size = len(data)
-                    size = min(data_size,
-                               self._conn.local_flow_control_window(stream_id),
-                               self._conn.max_outbound_frame_size)
-                    if data_size == 0 or size == data_size:
-                        self._conn.send_data(stream_id, data,
-                                             end_stream=end_stream)
-                        self._flush()
-                        break
-                    elif size > 0:
-                        self._conn.send_data(stream_id, data[:size])
-                        data = data[size:]
-                        self._flush()
+                    self._priority.unblock(stream_id)
+                    waiter = asyncio.Future()
+                    if not self._priority_events:
+                        self._loop.call_soon(self._priority_step)
+                    self._priority_events[stream_id] = waiter
+                    try:
+                        yield from waiter
+                        data_size = len(data)
+                        size = min(
+                            data_size,
+                            self._conn.local_flow_control_window(stream_id),
+                            self._conn.max_outbound_frame_size)
+                        if data_size == 0 or size == data_size:
+                            self._conn.send_data(stream_id, data,
+                                                 end_stream=end_stream)
+                            self._flush()
+                            break
+                        elif size > 0:
+                            self._conn.send_data(stream_id, data[:size])
+                            data = data[size:]
+                            self._flush()
+                    finally:
+                        self._priority_events.pop(stream_id, None)
+                        self._priority.block(stream_id)
+                        if self._priority_events:
+                            self._loop.call_soon(self._priority_step)
         except ProtocolError:
             raise exceptions.SendException(data)
 
@@ -585,6 +618,21 @@ class H2Protocol(asyncio.Protocol):
             except asyncio.TimeoutError:
                 pass
         return self._rtt
+
+    def reprioritize(self, stream_id,
+                     depends_on=None, weight=16, exclusive=False):
+        """
+        Update the priority status of an existing stream.
+
+        :param stream_id: The stream ID of the stream being updated.
+        :param depends_on: (optional) The ID of the stream that the stream now
+            depends on. If ``None``, will be moved to depend on stream 0.
+        :param weight: (optional) The new weight to give the stream. Defaults
+            to 16.
+        :param exclusive: (optional) Whether this stream should now be an
+            exclusive dependency of the new parent.
+        """
+        self._priority.reprioritize(stream_id, depends_on, weight, exclusive)
 
     @property
     def functional_timeout(self):

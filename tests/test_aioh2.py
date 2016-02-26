@@ -18,6 +18,7 @@ from h2.events import ResponseReceived
 from h2.events import SettingsAcknowledged
 from h2.exceptions import FlowControlError
 from h2.settings import INITIAL_WINDOW_SIZE
+from h2.settings import MAX_FRAME_SIZE
 
 from aioh2 import SendException
 from . import async_test, BaseTestCase
@@ -273,6 +274,62 @@ class TestServer(BaseTestCase):
             self.assertEqual(e.data, b'45678')
         else:
             self.assertRaises(SendException, lambda: None)
+
+    @async_test(timeout=8)
+    def test_priority(self):
+        self.conn.update_settings({
+            MAX_FRAME_SIZE: 16384,
+            INITIAL_WINDOW_SIZE: 16384 * 1024 * 32,
+        })
+        event = yield from self._expect_events()
+        self.assertIsInstance(event[0], SettingsAcknowledged)
+        event = yield from self.server.events.get()
+        self.assertIsInstance(event, RemoteSettingsChanged)
+
+        stream_1 = yield from self._send_headers()
+        yield from self.server.start_response(stream_1, {'a': '1'})
+        events = yield from self._expect_events()
+        self.assertIsInstance(events[0], ResponseReceived)
+
+        stream_2 = yield from self._send_headers()
+        yield from self.server.start_response(stream_2, {'a': '2'})
+        events = yield from self._expect_events()
+        self.assertIsInstance(events[0], ResponseReceived)
+
+        p1 = 32
+        p2 = 20
+
+        self.server.reprioritize(stream_1, weight=p1)
+        self.server.reprioritize(stream_2, weight=p2)
+        self.server.pause_writing()
+
+        running = [True]
+
+        @asyncio.coroutine
+        def _write(stream_id):
+            count = 0
+            while running[0]:
+                yield from self.server.send_data(stream_id, b'x')
+                count += 1
+            yield from self.server.end_stream(stream_id)
+            return count
+
+        task_1 = asyncio.async(_write(stream_1))
+        task_2 = asyncio.async(_write(stream_2))
+
+        for i in range(1000):
+            self.server.resume_writing()
+            yield from asyncio.sleep(0.004)
+            self.server.pause_writing()
+            yield from asyncio.sleep(0.001)
+
+        running[0] = False
+        self.server.resume_writing()
+
+        count_1 = yield from task_1
+        count_2 = yield from task_2
+
+        self.assertAlmostEqual(count_1 / count_2, p1 / p2, 1)
 
 
 if __name__ == '__main__':

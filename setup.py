@@ -15,6 +15,7 @@ with open('HISTORY.rst') as history_file:
 
 requirements = [
     'h2',
+    'priority',
 ]
 
 if sys.version_info[:2] < (3, 4):

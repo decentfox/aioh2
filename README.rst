@@ -22,7 +22,7 @@ Features
 --------
 
 * Asynchronous HTTP/2 client and server
-* Managed flow control and streaming data
+* Multiplexing streams of data with managed flow and priority control
 * Optional tickless health check
 * More to come
 
