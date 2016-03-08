@@ -46,7 +46,7 @@ def start_server(client_connected_cb, host=None, port=None, *, loop=None,
     def factory():
         # noinspection PyArgumentList
         rv = H2Protocol(False, loop=loop, **args)
-        client_connected_cb(rv)
+        rv.set_handler(client_connected_cb(rv))
         return rv
 
     # noinspection PyArgumentList
@@ -63,7 +63,6 @@ if hasattr(socket, 'AF_UNIX'):
         # noinspection PyArgumentList
         yield from loop.create_unix_connection(lambda: rv, path, **kwargs)
         return rv
-
 
     @asyncio.coroutine
     def start_unix_server(client_connected_cb, path=None, *, loop=None,

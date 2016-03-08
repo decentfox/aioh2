@@ -61,9 +61,7 @@ A server saying hello:
             await proto.send_trailers(stream_id, {'len': str(len(name))})
 
     # Start server on random port, with maximum concurrent requests of 3
-    server = await aioh2.start_server(
-        lambda p: asyncio.get_event_loop().create_task(on_connected(p)),
-        port=0, concurrency=3)
+    server = await aioh2.start_server(on_connected, port=0, concurrency=3)
     port = server.sockets[0].getsockname()[1]
 
 
@@ -99,6 +97,9 @@ And a client to try out:
     # Read response trailers
     trailers = await client.recv_trailers(stream_id)
     print('Response trailers:', trailers)
+
+    client.close_connection()
+    await asyncio.sleep(.1)
 
 
 Above example can be found at `examples/core.py`.
