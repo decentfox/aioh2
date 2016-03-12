@@ -367,7 +367,7 @@ class H2Protocol(asyncio.Protocol):
 
     def set_handler(self, handler):
         """
-        Connect with a coroutine, which is called when connection is made.
+        Connect with a coroutine, which is scheduled when connection is made.
 
         This function will create a task, and when connection is closed,
         the task will be canceled.

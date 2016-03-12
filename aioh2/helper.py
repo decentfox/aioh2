@@ -75,7 +75,7 @@ if hasattr(socket, 'AF_UNIX'):
         def factory():
             # noinspection PyArgumentList
             rv = H2Protocol(False, loop=loop, **args)
-            client_connected_cb(rv)
+            rv.set_handler(client_connected_cb(rv))
             return rv
 
         # noinspection PyArgumentList
