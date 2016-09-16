@@ -21,6 +21,7 @@ from h2.settings import INITIAL_WINDOW_SIZE
 from h2.settings import MAX_FRAME_SIZE
 
 from aioh2 import SendException
+from aioh2.helper import async_task
 from . import async_test, BaseTestCase
 
 
@@ -260,7 +261,7 @@ class TestServer(BaseTestCase):
         self.assertIsInstance(events[0], DataReceived)
         self.assertEqual(events[0].data, b'12')
 
-        f = asyncio.async(self.server.send_data(stream_id, b'345678'))
+        f = async_task(self.server.send_data(stream_id, b'345678'))
         events = yield from self._expect_events()
         self.assertIsInstance(events[0], DataReceived)
         self.assertEqual(events[0].data, b'3')
@@ -314,8 +315,8 @@ class TestServer(BaseTestCase):
             yield from self.server.end_stream(stream_id)
             return count
 
-        task_1 = asyncio.async(_write(stream_1))
-        task_2 = asyncio.async(_write(stream_2))
+        task_1 = async_task(_write(stream_1))
+        task_2 = async_task(_write(stream_2))
 
         for i in range(1000):
             self.server.resume_writing()
