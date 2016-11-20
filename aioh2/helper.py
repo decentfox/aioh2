@@ -81,3 +81,9 @@ if hasattr(socket, 'AF_UNIX'):
 
         # noinspection PyArgumentList
         return (yield from loop.create_unix_server(factory, path, **kwargs))
+
+
+if hasattr(asyncio, 'ensure_future'):  # Python >= 3.5
+    async_task = asyncio.ensure_future
+else:
+    async_task = asyncio.async
