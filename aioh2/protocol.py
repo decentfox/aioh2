@@ -6,6 +6,7 @@ import asyncio
 import priority
 from h2 import events
 from h2 import settings
+from h2.config import H2Configuration
 from h2.connection import H2Connection
 from h2.exceptions import NoSuchStreamError, StreamClosedError, ProtocolError
 
@@ -180,7 +181,7 @@ class H2Protocol(asyncio.Protocol):
         if loop is None:
             loop = asyncio.get_event_loop()
         self._loop = loop
-        self._conn = H2Connection(client_side=client_side)
+        self._conn = H2Connection(config=H2Configuration(client_side=client_side))
         self._transport = None
         self._streams = {}
         self._inbound_requests = asyncio.Queue(concurrency, loop=loop)
@@ -224,7 +225,7 @@ class H2Protocol(asyncio.Protocol):
         self._transport = transport
         self._conn.initiate_connection()
         self._conn.update_settings({
-            settings.MAX_CONCURRENT_STREAMS: self._inbound_requests.maxsize})
+            settings.SettingCodes.MAX_CONCURRENT_STREAMS: self._inbound_requests.maxsize})
         self._flush()
         self._stream_creatable.sync()
         self.resume_writing()
@@ -287,10 +288,10 @@ class H2Protocol(asyncio.Protocol):
                 stream.window_open.sync()
 
     def _remote_settings_changed(self, event: events.RemoteSettingsChanged):
-        if settings.INITIAL_WINDOW_SIZE in event.changed_settings:
+        if settings.SettingCodes.INITIAL_WINDOW_SIZE in event.changed_settings:
             for stream in list(self._streams.values()):
                 stream.window_open.sync()
-        if settings.MAX_CONCURRENT_STREAMS in event.changed_settings:
+        if settings.SettingCodes.MAX_CONCURRENT_STREAMS in event.changed_settings:
             self._stream_creatable.sync()
 
     def _ping_acknowledged(self, event: events.PingAcknowledged):
@@ -666,7 +667,7 @@ class H2Protocol(asyncio.Protocol):
 
     @initial_window_size.setter
     def initial_window_size(self, val):
-        self._conn.update_settings({settings.INITIAL_WINDOW_SIZE: val})
+        self._conn.update_settings({settings.SettingCodes.INITIAL_WINDOW_SIZE: val})
         self._flush()
 
     @property
@@ -682,7 +683,7 @@ class H2Protocol(asyncio.Protocol):
 
     @max_frame_size.setter
     def max_frame_size(self, val):
-        self._conn.update_settings({settings.MAX_FRAME_SIZE: val})
+        self._conn.update_settings({settings.SettingCodes.MAX_FRAME_SIZE: val})
         self._flush()
 
     @property
@@ -694,5 +695,5 @@ class H2Protocol(asyncio.Protocol):
 
     @max_concurrent_streams.setter
     def max_concurrent_streams(self, val):
-        self._conn.update_settings({settings.MAX_CONCURRENT_STREAMS: val})
+        self._conn.update_settings({settings.SettingCodes.MAX_CONCURRENT_STREAMS: val})
         self._flush()
