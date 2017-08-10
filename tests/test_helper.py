@@ -23,8 +23,7 @@ class TestHelper(BaseTestCase):
     @async_test
     def test_tcp(self):
         # Start server
-        server = yield from aioh2.start_server(
-            lambda p: asyncio.async(self._cb(p)), port=0, concurrency=3)
+        server = yield from aioh2.start_server(self._cb, port=0, concurrency=3)
         port = server.sockets[0].getsockname()[1]
 
         client = yield from aioh2.open_connection('0.0.0.0', port)
@@ -55,3 +54,5 @@ class TestHelper(BaseTestCase):
         fs, _ = yield from asyncio.wait([_test() for _ in range(8)])
         for f in fs:
             f.result()
+        client.close_connection()
+        yield from asyncio.sleep(0.1)

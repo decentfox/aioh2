@@ -186,6 +186,7 @@ class H2Protocol(asyncio.Protocol):
         self._inbound_requests = asyncio.Queue(concurrency, loop=loop)
         self._priority = priority.PriorityTree()
         self._priority_events = {}
+        self._handler = None
 
         # Locks
 
@@ -235,6 +236,8 @@ class H2Protocol(asyncio.Protocol):
         self._conn = None
         self._transport = None
         self.pause_writing()
+        if self._handler:
+            self._handler.cancel()
 
     def pause_writing(self):
         self._is_resumed = False
@@ -361,6 +364,23 @@ class H2Protocol(asyncio.Protocol):
                 self._priority_events.popitem()[1].set_result(None)
 
     # APIs
+
+    def set_handler(self, handler):
+        """
+        Connect with a coroutine, which is scheduled when connection is made.
+
+        This function will create a task, and when connection is closed,
+        the task will be canceled.
+        :param handler:
+        :return: None
+        """
+        if self._handler:
+            raise Exception('Handler was already set')
+        if handler:
+            self._handler = asyncio.async(handler, loop=self._loop)
+
+    def close_connection(self):
+        self._transport.close()
 
     @asyncio.coroutine
     def start_request(self, headers, *, end_stream=False):

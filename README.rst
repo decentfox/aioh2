@@ -41,29 +41,31 @@ A server saying hello:
 
     # Server request handler
     async def on_connected(proto):
-        while True:
-            # Receive a request from queue
-            stream_id, headers = await proto.recv_request()
+        try:
+            while True:
+                # Receive a request from queue
+                stream_id, headers = await proto.recv_request()
 
-            # Send response headers
-            await proto.start_response(stream_id, {':status': '200'})
+                # Send response headers
+                await proto.start_response(stream_id, {':status': '200'})
 
-            # Response body starts with "hello"
-            await proto.send_data(stream_id, b'hello, ')
+                # Response body starts with "hello"
+                await proto.send_data(stream_id, b'hello, ')
 
-            # Read all request body as a name from client side
-            name = await proto.read_stream(stream_id, -1)
+                # Read all request body as a name from client side
+                name = await proto.read_stream(stream_id, -1)
 
-            # Amend response body with the name
-            await proto.send_data(stream_id, name)
+                # Amend response body with the name
+                await proto.send_data(stream_id, name)
 
-            # Send trailers with the length of the name
-            await proto.send_trailers(stream_id, {'len': str(len(name))})
+                # Send trailers with the length of the name
+                await proto.send_trailers(stream_id, {'len': str(len(name))})
+        except asyncio.CancelledError:
+            # do cleanup here
+            pass
 
     # Start server on random port, with maximum concurrent requests of 3
-    server = await aioh2.start_server(
-        lambda p: asyncio.get_event_loop().create_task(on_connected(p)),
-        port=0, concurrency=3)
+    server = await aioh2.start_server(on_connected, port=0, concurrency=3)
     port = server.sockets[0].getsockname()[1]
 
 
@@ -99,6 +101,9 @@ And a client to try out:
     # Read response trailers
     trailers = await client.recv_trailers(stream_id)
     print('Response trailers:', trailers)
+
+    client.close_connection()
+    await asyncio.sleep(.1)
 
 
 Above example can be found at `examples/core.py`.
