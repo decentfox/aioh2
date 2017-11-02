@@ -17,8 +17,7 @@ from h2.events import RemoteSettingsChanged
 from h2.events import ResponseReceived
 from h2.events import SettingsAcknowledged
 from h2.exceptions import FlowControlError
-from h2.settings import INITIAL_WINDOW_SIZE
-from h2.settings import MAX_FRAME_SIZE
+from h2.settings import SettingCodes
 
 from aioh2 import SendException
 from aioh2.helper import async_task
@@ -180,7 +179,7 @@ class TestServer(BaseTestCase):
 
     @async_test
     def test_flow_control_settings(self):
-        self.server.update_settings({INITIAL_WINDOW_SIZE: 3})
+        self.server.update_settings({SettingCodes.INITIAL_WINDOW_SIZE: 3})
         event = yield from self._expect_events()
         self.assertIsInstance(event[0], RemoteSettingsChanged)
         event = yield from self.server.events.get()
@@ -204,14 +203,14 @@ class TestServer(BaseTestCase):
 
     @async_test
     def test_flow_control(self):
-        self.conn.update_settings({INITIAL_WINDOW_SIZE: 3})
+        self.conn.update_settings({SettingCodes.INITIAL_WINDOW_SIZE: 3})
         event = yield from self._expect_events()
         self.assertIsInstance(event[0], SettingsAcknowledged)
         event = yield from self.server.events.get()
         self.assertIsInstance(event, RemoteSettingsChanged)
 
         stream_id = yield from self._send_headers(end_stream=True)
-        yield from self.server.start_response(stream_id, {'a': '1'})
+        yield from self.server.start_response(stream_id, [(':status', '200')])
         events = yield from self._expect_events()
         self.assertIsInstance(events[0], ResponseReceived)
 
@@ -245,14 +244,14 @@ class TestServer(BaseTestCase):
 
     @async_test
     def test_broken_send(self):
-        self.conn.update_settings({INITIAL_WINDOW_SIZE: 3})
+        self.conn.update_settings({SettingCodes.INITIAL_WINDOW_SIZE: 3})
         event = yield from self._expect_events()
         self.assertIsInstance(event[0], SettingsAcknowledged)
         event = yield from self.server.events.get()
         self.assertIsInstance(event, RemoteSettingsChanged)
 
         stream_id = yield from self._send_headers(end_stream=True)
-        yield from self.server.start_response(stream_id, {'a': '1'})
+        yield from self.server.start_response(stream_id, [(':status', '200')])
         events = yield from self._expect_events()
         self.assertIsInstance(events[0], ResponseReceived)
 
@@ -279,8 +278,8 @@ class TestServer(BaseTestCase):
     @async_test(timeout=8)
     def test_priority(self):
         self.conn.update_settings({
-            MAX_FRAME_SIZE: 16384,
-            INITIAL_WINDOW_SIZE: 16384 * 1024 * 32,
+            SettingCodes.MAX_FRAME_SIZE: 16384,
+            SettingCodes.INITIAL_WINDOW_SIZE: 16384 * 1024 * 32,
         })
         event = yield from self._expect_events()
         self.assertIsInstance(event[0], SettingsAcknowledged)
@@ -288,12 +287,12 @@ class TestServer(BaseTestCase):
         self.assertIsInstance(event, RemoteSettingsChanged)
 
         stream_1 = yield from self._send_headers()
-        yield from self.server.start_response(stream_1, {'a': '1'})
+        yield from self.server.start_response(stream_1, [(':status', '200')])
         events = yield from self._expect_events()
         self.assertIsInstance(events[0], ResponseReceived)
 
         stream_2 = yield from self._send_headers()
-        yield from self.server.start_response(stream_2, {'a': '2'})
+        yield from self.server.start_response(stream_2, [(':status', '200')])
         events = yield from self._expect_events()
         self.assertIsInstance(events[0], ResponseReceived)
 

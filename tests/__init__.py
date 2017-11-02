@@ -4,6 +4,7 @@ import unittest
 import uuid
 
 import asyncio
+from h2.config import H2Configuration
 from h2.connection import H2Connection
 from h2.events import RemoteSettingsChanged, RequestReceived, WindowUpdated
 from h2.events import SettingsAcknowledged
@@ -78,7 +79,8 @@ class BaseTestCase(unittest.TestCase):
     @asyncio.coroutine
     def _setUp(self):
         self.r, self.w = yield from asyncio.open_unix_connection(self.path)
-        self.conn = H2Connection()
+        config = H2Configuration(header_encoding='utf-8')
+        self.conn = H2Connection(config=config)
         self.conn.initiate_connection()
         self.w.write(self.conn.data_to_send())
         events = yield from self._expect_events(3)
@@ -105,7 +107,12 @@ class BaseTestCase(unittest.TestCase):
 
     @asyncio.coroutine
     def _send_headers(self, end_stream=False):
-        headers = [(':method', 'GET'), (':path', '/index.html')]
+        headers = [
+            (':method', 'GET'),
+            (':authority', 'example.com'),
+            (':scheme', 'h2c'),
+            (':path', '/index.html'),
+        ]
         stream_id = self.conn.get_next_available_stream_id()
         self.conn.send_headers(stream_id, headers, end_stream=end_stream)
         yield from self._expect_events(0)

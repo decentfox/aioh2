@@ -10,7 +10,7 @@ async def example():
                 stream_id, headers = await proto.recv_request()
 
                 # Send response headers
-                await proto.start_response(stream_id, {':status': '200'})
+                await proto.start_response(stream_id, [(':status', '200')])
 
                 # Response body starts with "hello"
                 await proto.send_data(stream_id, b'hello, ')
@@ -22,16 +22,17 @@ async def example():
                 await proto.send_data(stream_id, name)
 
                 # Send trailers with the length of the name
-                await proto.send_trailers(stream_id, {'len': str(len(name))})
+                await proto.send_trailers(stream_id, [('len', str(len(name)))])
         except asyncio.CancelledError:
             print('Task terminated, saving to disk...')
 
     # Start server on random port, with maximum concurrent requests of 3
-    server = await aioh2.start_server(on_connected, port=0, concurrency=3)
+    server = await aioh2.start_server(on_connected, host='127.0.0.1', port=0,
+                                      concurrency=3)
     port = server.sockets[0].getsockname()[1]
 
     # Open client connection
-    client = await aioh2.open_connection('0.0.0.0', port,
+    client = await aioh2.open_connection('127.0.0.1', port,
                                          functional_timeout=0.1)
 
     # Optionally wait for an ack of tickless ping - a.k.a. until functional
@@ -41,8 +42,12 @@ async def example():
         print('Round-trip time: %.1fms' % (rtt * 1000))
 
     # Start request with headers
-    stream_id = await client.start_request(
-        {':method': 'GET', ':path': '/index.html'})
+    stream_id = await client.start_request([
+        (':scheme', 'h2c'),
+        (':authority', 'example.com'),
+        (':method', 'GET'),
+        (':path', '/index.html'),
+    ])
 
     # Send my name "world" as whole request body
     await client.send_data(stream_id, b'world', end_stream=True)

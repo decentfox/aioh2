@@ -181,7 +181,9 @@ class H2Protocol(asyncio.Protocol):
         if loop is None:
             loop = asyncio.get_event_loop()
         self._loop = loop
-        self._conn = H2Connection(config=H2Configuration(client_side=client_side))
+        config = H2Configuration(client_side=client_side,
+                                 header_encoding='utf-8')
+        self._conn = H2Connection(config=config)
         self._transport = None
         self._streams = {}
         self._inbound_requests = asyncio.Queue(concurrency, loop=loop)
