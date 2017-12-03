@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 
-import sys
-
 try:
     from setuptools import setup
 except ImportError:
@@ -15,11 +13,8 @@ with open('HISTORY.rst') as history_file:
 
 requirements = [
     'h2 >=3, <4',
-    'priority',
+    'priority==1.3.0',
 ]
-
-if sys.version_info[:2] < (3, 4):
-    requirements.append('asyncio')
 
 test_requirements = [
 ]
@@ -49,9 +44,9 @@ setup(
         'License :: OSI Approved :: BSD License',
         'Natural Language :: English',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.3',
         'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
     ],
     test_suite='tests',
     tests_require=test_requirements

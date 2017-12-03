@@ -10,4 +10,6 @@ Development Lead
 Contributors
 ------------
 
-None yet. Why not be the first?
+* Tony Wang <wwwjfy@gmail.com>
+* Arthur Darcet <arthur+git@darcet.fr>
+* Peter Wu <pwu@cloudflare.com>
