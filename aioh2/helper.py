@@ -25,19 +25,20 @@ def _split_kwargs(kwargs):
 
 
 @asyncio.coroutine
-def open_connection(host=None, port=None, *, loop=None, **kwargs):
+def open_connection(host=None, port=None, *, cls=H2Protocol, loop=None,
+                    **kwargs):
     if loop is None:
         loop = asyncio.get_event_loop()
     # noinspection PyArgumentList
-    rv = H2Protocol(True, loop=loop, **_split_kwargs(kwargs))
+    rv = cls(True, loop=loop, **_split_kwargs(kwargs))
     # noinspection PyArgumentList
     yield from loop.create_connection(lambda: rv, host, port, **kwargs)
     return rv
 
 
 @asyncio.coroutine
-def start_server(client_connected_cb, host=None, port=None, *, loop=None,
-                 **kwargs):
+def start_server(client_connected_cb, host=None, port=None, *, cls=H2Protocol,
+                 loop=None, **kwargs):
     if loop is None:
         loop = asyncio.get_event_loop()
 
@@ -45,7 +46,7 @@ def start_server(client_connected_cb, host=None, port=None, *, loop=None,
 
     def factory():
         # noinspection PyArgumentList
-        rv = H2Protocol(False, loop=loop, **args)
+        rv = cls(False, loop=loop, **args)
         rv.set_handler(client_connected_cb(rv))
         return rv
 
