@@ -21,7 +21,7 @@ test_requirements = [
 
 setup(
     name='aioh2',
-    version='0.2.1',
+    version='0.2.2',
     description="HTTP/2 implementation with hyper-h2 on Python 3 asyncio.",
     long_description=readme + '\n\n' + history,
     author="Fantix King",
