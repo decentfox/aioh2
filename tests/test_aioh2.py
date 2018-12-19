@@ -275,6 +275,7 @@ class TestServer(BaseTestCase):
         else:
             self.assertRaises(SendException, lambda: None)
 
+    @unittest.skip("flakey - https://github.com/decentfox/aioh2/issues/17")
     @async_test(timeout=8)
     def test_priority(self):
         self.conn.update_settings({
