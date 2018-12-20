@@ -10,7 +10,7 @@ from h2.config import H2Configuration
 from h2.connection import H2Connection
 from h2.exceptions import NoSuchStreamError, StreamClosedError, ProtocolError
 
-from . import exceptions
+from . import exceptions, async_task
 
 __all__ = ['H2Protocol']
 logger = getLogger(__package__)
@@ -380,7 +380,7 @@ class H2Protocol(asyncio.Protocol):
         if self._handler:
             raise Exception('Handler was already set')
         if handler:
-            self._handler = asyncio.async(handler, loop=self._loop)
+            self._handler = async_task(handler, loop=self._loop)
 
     def close_connection(self):
         self._transport.close()
