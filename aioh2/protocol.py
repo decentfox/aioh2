@@ -10,7 +10,7 @@ from h2.config import H2Configuration
 from h2.connection import H2Connection
 from h2.exceptions import NoSuchStreamError, StreamClosedError, ProtocolError
 
-from . import exceptions, async_task
+from . import exceptions
 
 __all__ = ['H2Protocol']
 logger = getLogger(__package__)
