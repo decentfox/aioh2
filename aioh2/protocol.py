@@ -15,6 +15,11 @@ from . import exceptions
 __all__ = ['H2Protocol']
 logger = getLogger(__package__)
 
+if hasattr(asyncio, 'ensure_future'):  # Python >= 3.5
+    async_task = getattr(asyncio, 'ensure_future')
+else:
+    async_task = getattr(asyncio, 'async')
+
 
 @asyncio.coroutine
 def _wait_for_events(*events_):
