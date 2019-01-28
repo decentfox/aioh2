@@ -4,7 +4,7 @@ import asyncio
 
 from .protocol import H2Protocol
 
-__all__ = ['open_connection', 'start_server', 'async_task']
+__all__ = ['open_connection', 'start_server']
 if hasattr(socket, 'AF_UNIX'):
     __all__.extend(['open_unix_connection', 'start_unix_server'])
 
@@ -82,8 +82,3 @@ if hasattr(socket, 'AF_UNIX'):
         # noinspection PyArgumentList
         return (yield from loop.create_unix_server(factory, path, **kwargs))
 
-
-if hasattr(asyncio, 'ensure_future'):  # Python >= 3.5
-    async_task = getattr(asyncio, 'ensure_future')
-else:
-    async_task = getattr(asyncio, 'async')
