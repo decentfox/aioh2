@@ -10,16 +10,15 @@ from h2.config import H2Configuration
 from h2.connection import H2Connection
 from h2.exceptions import NoSuchStreamError, StreamClosedError, ProtocolError
 
-from . import exceptions, async_task
+from . import exceptions
 
 __all__ = ['H2Protocol']
 logger = getLogger(__package__)
 
 
-@asyncio.coroutine
-def _wait_for_events(*events_):
-    while not all([event.is_set() for event in events_]):
-        yield from asyncio.wait([event.wait() for event in events_])
+async def _wait_for_events(*events_):
+    for event in events_:
+        await event.wait()
 
 
 class _StreamEndedException(Exception):
@@ -31,14 +30,13 @@ class _StreamEndedException(Exception):
 
 class CallableEvent(asyncio.Event):
     def __init__(self, func, *, loop=None):
-        super().__init__(loop=loop)
+        super().__init__()
         self._func = func
 
-    @asyncio.coroutine
-    def wait(self):
+    async def wait(self):
         while not self._func():
             self.clear()
-            yield from super().wait()
+            await super().wait()
 
     def sync(self):
         if self._func():
@@ -53,20 +51,18 @@ class CallableEvent(asyncio.Event):
 
 class H2Stream:
     def __init__(self, stream_id, window_getter, loop=None):
-        if loop is None:
-            loop = asyncio.get_event_loop()
         self._stream_id = stream_id
         self._window_getter = window_getter
 
-        self._wlock = asyncio.Lock(loop=loop)
-        self._window_open = CallableEvent(self._is_window_open, loop=loop)
+        self._wlock = asyncio.Lock()
+        self._window_open = CallableEvent(self._is_window_open)
 
-        self._rlock = asyncio.Lock(loop=loop)
+        self._rlock = asyncio.Lock()
         self._buffers = deque()
         self._buffer_size = 0
-        self._buffer_ready = asyncio.Event(loop=loop)
-        self._response = asyncio.Future(loop=loop)
-        self._trailers = asyncio.Future(loop=loop)
+        self._buffer_ready = asyncio.Event()
+        self._response = asyncio.Future()
+        self._trailers = asyncio.Future()
         self._eof_received = False
         self._closed = False
 
@@ -125,9 +121,8 @@ class H2Stream:
         if not self._trailers.done():
             self._trailers.set_result(headers)
 
-    @asyncio.coroutine
-    def read_frame(self):
-        yield from self._buffer_ready.wait()
+    async def read_frame(self):
+        await self._buffer_ready.wait()
         rv = b''
         if self._buffers:
             rv = self._buffers.popleft()
@@ -139,9 +134,8 @@ class H2Stream:
                 self._buffer_ready.clear()
         return rv
 
-    @asyncio.coroutine
-    def read_all(self):
-        yield from self._buffer_ready.wait()
+    async def read_all(self):
+        await self._buffer_ready.wait()
         rv = []
         rv.extend(self._buffers)
         self._buffers.clear()
@@ -152,9 +146,8 @@ class H2Stream:
             self._buffer_ready.clear()
             return rv
 
-    @asyncio.coroutine
-    def read(self, n):
-        yield from self._buffer_ready.wait()
+    async def read(self, n):
+        await self._buffer_ready.wait()
         rv = []
         count = 0
         while n > count and self._buffers:
@@ -176,17 +169,15 @@ class H2Stream:
 
 
 class H2Protocol(asyncio.Protocol):
-    def __init__(self, client_side: bool, *, loop=None,
+    def __init__(self, client_side: bool, *,
                  concurrency=8, functional_timeout=2):
-        if loop is None:
-            loop = asyncio.get_event_loop()
-        self._loop = loop
+        self._loop = asyncio.get_running_loop()
         config = H2Configuration(client_side=client_side,
                                  header_encoding='utf-8')
         self._conn = H2Connection(config=config)
         self._transport = None
         self._streams = {}
-        self._inbound_requests = asyncio.Queue(concurrency, loop=loop)
+        self._inbound_requests = asyncio.Queue(concurrency)
         self._priority = priority.PriorityTree()
         self._priority_events = {}
         self._handler = None
@@ -194,15 +185,14 @@ class H2Protocol(asyncio.Protocol):
         # Locks
 
         self._is_resumed = False
-        self._resumed = CallableEvent(lambda: self._is_resumed, loop=loop)
-        self._stream_creatable = CallableEvent(self._is_stream_creatable,
-                                               loop=loop)
+        self._resumed = CallableEvent(lambda: self._is_resumed)
+        self._stream_creatable = CallableEvent(self._is_stream_creatable)
         self._last_active = 0
         self._ping_index = -1
         self._ping_time = 0
         self._rtt = None
         self._functional_timeout = functional_timeout
-        self._functional = CallableEvent(self._is_functional, loop=loop)
+        self._functional = CallableEvent(self._is_functional)
 
         # Dispatch table
 
@@ -213,7 +203,8 @@ class H2Protocol(asyncio.Protocol):
             events.DataReceived: self._data_received,
             events.WindowUpdated: self._window_updated,
             events.RemoteSettingsChanged: self._remote_settings_changed,
-            events.PingAcknowledged: self._ping_acknowledged,
+            events.PingReceived: self._ping_received,
+            events.PingAckReceived: self._ping_ack_received,
             events.StreamEnded: self._stream_ended,
             events.StreamReset: self._stream_reset,
             events.PushedStreamReceived: self._pushed_stream_received,
@@ -299,7 +290,10 @@ class H2Protocol(asyncio.Protocol):
         if settings.SettingCodes.MAX_CONCURRENT_STREAMS in event.changed_settings:
             self._stream_creatable.sync()
 
-    def _ping_acknowledged(self, event: events.PingAcknowledged):
+    def _ping_received(self, event: events.PingReceived):
+        pass
+
+    def _ping_ack_received(self, event: events.PingAckReceived):
         if struct.unpack('Q', event.ping_data) == (self._ping_index,):
             self._rtt = self._loop.time() - self._ping_time
 
@@ -332,8 +326,7 @@ class H2Protocol(asyncio.Protocol):
         stream = self._streams.get(stream_id)
         if stream is None:
             stream = self._streams[stream_id] = H2Stream(
-                stream_id, self._conn.local_flow_control_window,
-                loop=self._loop)
+                stream_id, self._conn.local_flow_control_window)
         return stream
 
     def _flush(self):
@@ -380,13 +373,12 @@ class H2Protocol(asyncio.Protocol):
         if self._handler:
             raise Exception('Handler was already set')
         if handler:
-            self._handler = async_task(handler, loop=self._loop)
+            self._handler = asyncio.create_task(handler)
 
     def close_connection(self):
         self._transport.close()
 
-    @asyncio.coroutine
-    def start_request(self, headers, *, end_stream=False):
+    async def start_request(self, headers, *, end_stream=False):
         """
         Start a request by sending given headers on a new stream, and return
         the ID of the new stream.
@@ -404,7 +396,7 @@ class H2Protocol(asyncio.Protocol):
                            `True` (default `False`).
         :return: Stream ID as a integer, used for further communication.
         """
-        yield from _wait_for_events(self._resumed, self._stream_creatable)
+        await _wait_for_events(self._resumed, self._stream_creatable)
         stream_id = self._conn.get_next_available_stream_id()
         self._priority.insert_stream(stream_id)
         self._priority.block(stream_id)
@@ -412,8 +404,7 @@ class H2Protocol(asyncio.Protocol):
         self._flush()
         return stream_id
 
-    @asyncio.coroutine
-    def start_response(self, stream_id, headers, *, end_stream=False):
+    async def start_response(self, stream_id, headers, *, end_stream=False):
         """
         Start a response by sending given headers on the given stream.
 
@@ -424,12 +415,11 @@ class H2Protocol(asyncio.Protocol):
         :param end_stream: To send a response without body, set `end_stream` to
                            `True` (default `False`).
         """
-        yield from self._resumed.wait()
+        await self._resumed.wait()
         self._conn.send_headers(stream_id, headers, end_stream=end_stream)
         self._flush()
 
-    @asyncio.coroutine
-    def send_data(self, stream_id, data, *, end_stream=False):
+    async def send_data(self, stream_id, data, *, end_stream=False):
         """
         Send request or response body on the given stream.
 
@@ -461,9 +451,9 @@ class H2Protocol(asyncio.Protocol):
                 unsent can be found in `data` of the exception.
         """
         try:
-            with (yield from self._get_stream(stream_id).wlock):
+            async with self._get_stream(stream_id).wlock:
                 while True:
-                    yield from _wait_for_events(
+                    await _wait_for_events(
                         self._resumed, self._get_stream(stream_id).window_open)
                     self._priority.unblock(stream_id)
                     waiter = asyncio.Future()
@@ -471,7 +461,7 @@ class H2Protocol(asyncio.Protocol):
                         self._loop.call_soon(self._priority_step)
                     self._priority_events[stream_id] = waiter
                     try:
-                        yield from waiter
+                        await waiter
                         data_size = len(data)
                         size = min(
                             data_size,
@@ -494,8 +484,7 @@ class H2Protocol(asyncio.Protocol):
         except ProtocolError:
             raise exceptions.SendException(data)
 
-    @asyncio.coroutine
-    def send_trailers(self, stream_id, headers):
+    async def send_trailers(self, stream_id, headers):
         """
         Send trailers on the given stream, closing the stream locally.
 
@@ -505,13 +494,12 @@ class H2Protocol(asyncio.Protocol):
         :param stream_id: Which stream to send trailers on.
         :param headers: A list of key-value tuples as trailers.
         """
-        with (yield from self._get_stream(stream_id).wlock):
-            yield from self._resumed.wait()
+        async with self._get_stream(stream_id).wlock:
+            await self._resumed.wait()
             self._conn.send_headers(stream_id, headers, end_stream=True)
             self._flush()
 
-    @asyncio.coroutine
-    def end_stream(self, stream_id):
+    async def end_stream(self, stream_id):
         """
         Close the given stream locally.
 
@@ -520,13 +508,12 @@ class H2Protocol(asyncio.Protocol):
 
         :param stream_id: Which stream to close.
         """
-        with (yield from self._get_stream(stream_id).wlock):
-            yield from self._resumed.wait()
+        async with self._get_stream(stream_id).wlock:
+            await self._resumed.wait()
             self._conn.end_stream(stream_id)
             self._flush()
 
-    @asyncio.coroutine
-    def recv_request(self):
+    async def recv_request(self):
         """
         Retrieve next inbound request in queue.
 
@@ -534,31 +521,28 @@ class H2Protocol(asyncio.Protocol):
 
         :return: A tuple `(stream_id, headers)`.
         """
-        rv = yield from self._inbound_requests.get()
+        rv = await self._inbound_requests.get()
         return rv[1:]
 
-    @asyncio.coroutine
-    def recv_response(self, stream_id):
+    async def recv_response(self, stream_id):
         """
         Wait until a response is ready on the given stream.
 
         :param stream_id: Stream to wait on.
         :return: A list of key-value tuples as response headers.
         """
-        return (yield from self._get_stream(stream_id).response)
+        return await self._get_stream(stream_id).response
 
-    @asyncio.coroutine
-    def recv_trailers(self, stream_id):
+    async def recv_trailers(self, stream_id):
         """
         Wait until trailers are ready on the given stream.
 
         :param stream_id: Stream to wait on.
         :return: A list of key-value tuples as trailers.
         """
-        return (yield from self._get_stream(stream_id).trailers)
+        return await self._get_stream(stream_id).trailers
 
-    @asyncio.coroutine
-    def read_stream(self, stream_id, size=None):
+    async def read_stream(self, stream_id, size=None):
         """
         Read data from the given stream.
 
@@ -587,19 +571,19 @@ class H2Protocol(asyncio.Protocol):
         """
         rv = []
         try:
-            with (yield from self._get_stream(stream_id).rlock):
+            async with self._get_stream(stream_id).rlock:
                 if size is None:
                     rv.append((
-                        yield from self._get_stream(stream_id).read_frame()))
+                        await self._get_stream(stream_id).read_frame()))
                     self._flow_control(stream_id)
                 elif size < 0:
                     while True:
                         rv.extend((
-                            yield from self._get_stream(stream_id).read_all()))
+                            await self._get_stream(stream_id).read_all()))
                         self._flow_control(stream_id)
                 else:
                     while size > 0:
-                        bufs, count = yield from self._get_stream(
+                        bufs, count = await self._get_stream(
                             stream_id).read(size)
                         rv.extend(bufs)
                         size -= count
@@ -618,8 +602,7 @@ class H2Protocol(asyncio.Protocol):
         self._conn.update_settings(new_settings)
         self._flush()
 
-    @asyncio.coroutine
-    def wait_functional(self):
+    async def wait_functional(self):
         """
         Wait until the connection becomes functional.
 
@@ -636,8 +619,8 @@ class H2Protocol(asyncio.Protocol):
             self._conn.ping(struct.pack('Q', self._ping_index))
             self._flush()
             try:
-                yield from asyncio.wait_for(self._functional.wait(),
-                                            self._functional_timeout)
+                await asyncio.wait_for(self._functional.wait(),
+                                       self._functional_timeout)
             except asyncio.TimeoutError:
                 pass
         return self._rtt
