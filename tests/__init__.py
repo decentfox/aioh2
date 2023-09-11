@@ -22,7 +22,7 @@ def async_test(timeout=1):
         @functools.wraps(f)
         def _wrapper(self, *args, **kwargs):
             task = self.loop.create_task(
-                asyncio.coroutine(f)(self, *args, **kwargs))
+                f(self, *args, **kwargs))
 
             def _cancel():
                 task.print_stack()
@@ -51,8 +51,8 @@ def async_test(timeout=1):
 
 
 class Server(H2Protocol):
-    def __init__(self, test, client_side, *, loop=None):
-        super().__init__(client_side, loop=loop)
+    def __init__(self, test, client_side):
+        super().__init__(client_side)
         test.server = self
         self.events = asyncio.Queue()
 
@@ -68,7 +68,7 @@ class BaseTestCase(unittest.TestCase):
         self.server = None
         self._server = self.loop.run_until_complete(
             self.loop.create_unix_server(
-                lambda: Server(self, False, loop=self.loop), self.path))
+                lambda: Server(self, False), self.path))
         self.loop.run_until_complete(self._setUp())
 
     def tearDown(self):
@@ -76,37 +76,34 @@ class BaseTestCase(unittest.TestCase):
         os.remove(self.path)
         self.w.close()
 
-    @asyncio.coroutine
-    def _setUp(self):
-        self.r, self.w = yield from asyncio.open_unix_connection(self.path)
+    async def _setUp(self):
+        self.r, self.w = await asyncio.open_unix_connection(self.path)
         config = H2Configuration(header_encoding='utf-8')
         self.conn = H2Connection(config=config)
         self.conn.initiate_connection()
         self.w.write(self.conn.data_to_send())
-        events = yield from self._expect_events(3)
+        events = await self._expect_events(3)
         self.assertIsInstance(events[0], RemoteSettingsChanged)
         self.assertIsInstance(events[1], RemoteSettingsChanged)
         self.assertIsInstance(events[2], SettingsAcknowledged)
 
-        self.assertIsInstance((yield from self.server.events.get()),
+        self.assertIsInstance(await self.server.events.get(),
                               RemoteSettingsChanged)
-        self.assertIsInstance((yield from self.server.events.get()),
+        self.assertIsInstance(await self.server.events.get(),
                               SettingsAcknowledged)
-        self.assertIsInstance((yield from self.server.events.get()),
+        self.assertIsInstance(await self.server.events.get(),
                               SettingsAcknowledged)
 
-    @asyncio.coroutine
-    def _expect_events(self, n=1):
+    async def _expect_events(self, n=1):
         events = []
         self.w.write(self.conn.data_to_send())
         while len(events) < n:
-            events += self.conn.receive_data((yield from self.r.read(1024)))
+            events += self.conn.receive_data(await self.r.read(1024))
             self.w.write(self.conn.data_to_send())
         self.assertEqual(len(events), n)
         return events
 
-    @asyncio.coroutine
-    def _send_headers(self, end_stream=False):
+    async def _send_headers(self, end_stream=False):
         headers = [
             (':method', 'GET'),
             (':authority', 'example.com'),
@@ -115,28 +112,26 @@ class BaseTestCase(unittest.TestCase):
         ]
         stream_id = self.conn.get_next_available_stream_id()
         self.conn.send_headers(stream_id, headers, end_stream=end_stream)
-        yield from self._expect_events(0)
-        event = yield from self.server.events.get()
+        await self._expect_events(0)
+        event = await self.server.events.get()
         self.assertIsInstance(event, RequestReceived)
         self.assertEqual(event.stream_id, stream_id)
         self.assertEqual(event.headers, headers)
         return stream_id
 
-    @asyncio.coroutine
-    def _expect_connection_flow_control_disabled(self):
-        events = yield from self._expect_events()
+    async def _expect_connection_flow_control_disabled(self):
+        events = await self._expect_events()
         self.assertIsInstance(events[0], WindowUpdated)
         self.assertEqual(events[0].stream_id, 0)
         self.assertGreater(events[0].delta, 1073741822)
 
-    @asyncio.coroutine
-    def _assert_received(self, stream_id, coro, expected):
-        data = yield from coro
+    async def _assert_received(self, stream_id, coro, expected):
+        data = await coro
         self.assertEqual(data, expected)
 
         ack = 0
         while ack < len(data):
-            events = yield from self._expect_events()
+            events = await self._expect_events()
             self.assertIsInstance(events[0], WindowUpdated)
             self.assertEqual(events[0].stream_id, stream_id)
             ack += events[0].delta

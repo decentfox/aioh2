@@ -4,7 +4,7 @@ import asyncio
 
 from .protocol import H2Protocol
 
-__all__ = ['open_connection', 'start_server', 'async_task']
+__all__ = ['open_connection', 'start_server']
 if hasattr(socket, 'AF_UNIX'):
     __all__.extend(['open_unix_connection', 'start_unix_server'])
 
@@ -24,66 +24,57 @@ def _split_kwargs(kwargs):
     return rv
 
 
-@asyncio.coroutine
-def open_connection(host=None, port=None, *, cls=H2Protocol, loop=None,
-                    **kwargs):
+async def open_connection(host=None, port=None, *, cls=H2Protocol, loop=None,
+                          **kwargs):
     if loop is None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
     # noinspection PyArgumentList
-    rv = cls(True, loop=loop, **_split_kwargs(kwargs))
+    protocol = cls(True, **_split_kwargs(kwargs))
     # noinspection PyArgumentList
-    yield from loop.create_connection(lambda: rv, host, port, **kwargs)
-    return rv
+    await loop.create_connection(lambda: protocol, host, port, **kwargs)
+    return protocol
 
 
-@asyncio.coroutine
-def start_server(client_connected_cb, host=None, port=None, *, cls=H2Protocol,
-                 loop=None, **kwargs):
+async def start_server(client_connected_cb, host=None, port=None, *, cls=H2Protocol,
+                       loop=None, **kwargs):
     if loop is None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
     args = _split_kwargs(kwargs)
 
     def factory():
         # noinspection PyArgumentList
-        rv = cls(False, loop=loop, **args)
-        rv.set_handler(client_connected_cb(rv))
-        return rv
+        protocol = cls(False, **args)
+        protocol.set_handler(client_connected_cb(protocol))
+        return protocol
 
     # noinspection PyArgumentList
-    return (yield from loop.create_server(factory, host, port, **kwargs))
+    return await loop.create_server(factory, host, port, **kwargs)
 
 
 if hasattr(socket, 'AF_UNIX'):
-    @asyncio.coroutine
-    def open_unix_connection(path=None, *, loop=None, **kwargs):
-        if loop is None:
-            loop = asyncio.get_event_loop()
-        # noinspection PyArgumentList
-        rv = H2Protocol(True, loop=loop, **_split_kwargs(kwargs))
-        # noinspection PyArgumentList
-        yield from loop.create_unix_connection(lambda: rv, path, **kwargs)
-        return rv
 
-    @asyncio.coroutine
-    def start_unix_server(client_connected_cb, path=None, *, loop=None,
-                          **kwargs):
+    async def open_unix_connection(path=None, *, loop=None, **kwargs):
         if loop is None:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
+        # noinspection PyArgumentList
+        protocol = H2Protocol(True, **_split_kwargs(kwargs))
+        # noinspection PyArgumentList
+        await loop.create_unix_connection(lambda: protocol, path, **kwargs)
+        return protocol
+
+    async def start_unix_server(client_connected_cb, path=None, *, loop=None,
+                                **kwargs):
+        if loop is None:
+            loop = asyncio.get_running_loop()
 
         args = _split_kwargs(kwargs)
 
         def factory():
             # noinspection PyArgumentList
-            rv = H2Protocol(False, loop=loop, **args)
-            rv.set_handler(client_connected_cb(rv))
-            return rv
+            protocol = H2Protocol(False, **args)
+            protocol.set_handler(client_connected_cb(protocol))
+            return protocol
 
         # noinspection PyArgumentList
-        return (yield from loop.create_unix_server(factory, path, **kwargs))
-
-
-if hasattr(asyncio, 'ensure_future'):  # Python >= 3.5
-    async_task = getattr(asyncio, 'ensure_future')
-else:
-    async_task = getattr(asyncio, 'async')
+        return await loop.create_unix_server(factory, path, **kwargs)
