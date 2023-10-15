@@ -481,6 +481,9 @@ class H2Protocol(asyncio.Protocol):
                         self._priority.block(stream_id)
                         if self._priority_events:
                             self._loop.call_soon(self._priority_step)
+        except StreamClosedError:
+            self._priority.remove_stream(stream_id)
+            raise exceptions.SendException(data)
         except ProtocolError:
             raise exceptions.SendException(data)
 
@@ -589,12 +592,12 @@ class H2Protocol(asyncio.Protocol):
                         size -= count
                         self._flow_control(stream_id)
         except StreamClosedError:
-            pass
+            self._priority.remove_stream(stream_id)
         except _StreamEndedException as e:
             try:
                 self._flow_control(stream_id)
             except StreamClosedError:
-                pass
+                self._priority.remove_stream(stream_id)
             rv.extend(e.bufs)
         return b''.join(rv)
 
